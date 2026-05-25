@@ -1,0 +1,433 @@
+{
+  "name": "Email Outreach - Multi-Client",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "email-outreach/send",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "eo-001-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "email-outreach-send"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json;\n\nconst required = ['credential_id', 'recipients', 'subject', 'body_html'];\nconst missing = required.filter(f => !body[f]);\nif (missing.length > 0) {\n  throw new Error('Missing required fields: ' + missing.join(', '));\n}\nif (!Array.isArray(body.recipients) || body.recipients.length === 0) {\n  throw new Error('recipients must be a non-empty array');\n}\nfor (const r of body.recipients) {\n  if (!r.email) throw new Error('Each recipient must have an email field');\n}\n\nreturn [{\n  json: {\n    credential_id: body.credential_id,\n    recipients: body.recipients,\n    subject: body.subject,\n    body_html: body.body_html,\n    body_text: body.body_text || '',\n    from_name: body.from_name || '',\n    reply_to: body.reply_to || '',\n    cc: Array.isArray(body.cc) ? body.cc : [],\n    bcc: Array.isArray(body.bcc) ? body.bcc : []\n  }\n}];"
+      },
+      "id": "eo-002-validate",
+      "name": "Code: Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "find",
+        "collection": "project_db_client",
+        "query": "={{ JSON.stringify({ credential_id: $json.credential_id }) }}",
+        "limit": 1,
+        "options": {}
+      },
+      "id": "eo-003-mongo-fetch",
+      "name": "MongoDB: Fetch Credentials",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [720, 300],
+      "credentials": {
+        "mongoDb": {
+          "id": "1",
+          "name": "MongoDB - project_db"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nif (items.length === 0 || !items[0].json._id) {\n  return [{ json: { _found: false } }];\n}\nreturn [{ json: { ...items[0].json, _found: true } }];"
+      },
+      "id": "eo-004-handle-db-result",
+      "name": "Code: Handle DB Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cred-found-check",
+              "leftValue": "={{ $json._found }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "eo-005-if-found",
+      "name": "IF: Credentials Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: 'Credential not found', credential_id: $('Code: Validate Input').first().json.credential_id }) }}",
+        "options": { "responseCode": 404 }
+      },
+      "id": "eo-006-respond-404",
+      "name": "Respond: 404 Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1440, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cred = $json;\n\nif (!cred.oauth || !cred.oauth.token_expiry) {\n  throw new Error('Invalid credential document: missing oauth.token_expiry for credential_id: ' + cred.credential_id);\n}\n\nconst now = Date.now();\nconst expiry = new Date(cred.oauth.token_expiry).getTime();\n\nif (now < expiry - 60000) {\n  return [{ json: { ...cred, token_refreshed: false } }];\n}\n\nconst isGmail = cred.provider === 'gmail';\nconst tokenUrl = isGmail\n  ? 'https://oauth2.googleapis.com/token'\n  : `https://login.microsoftonline.com/${cred.oauth.tenant_id || 'common'}/oauth2/v2.0/token`;\n\nconst reqBody = new URLSearchParams({\n  client_id: cred.oauth.client_id,\n  client_secret: cred.oauth.client_secret,\n  refresh_token: cred.oauth.refresh_token,\n  grant_type: 'refresh_token'\n}).toString();\n\nconst res = await $helpers.httpRequest({\n  method: 'POST',\n  url: tokenUrl,\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: reqBody\n});\n\nif (!res.access_token) {\n  throw new Error('Token refresh failed: ' + JSON.stringify(res));\n}\n\nconst newExpiry = new Date(now + res.expires_in * 1000).toISOString();\n\nreturn [{\n  json: {\n    ...cred,\n    oauth: {\n      ...cred.oauth,\n      access_token: res.access_token,\n      token_expiry: newExpiry\n    },\n    token_refreshed: true\n  }\n}];"
+      },
+      "id": "eo-007-get-valid-token",
+      "name": "Code: Get Valid Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "token-refreshed-check",
+              "leftValue": "={{ $json.token_refreshed }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "eo-008-if-token-refreshed",
+      "name": "IF: Token Refreshed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "updateOne",
+        "collection": "project_db_client",
+        "filter": "={{ JSON.stringify({ credential_id: $json.credential_id }) }}",
+        "update": "={{ JSON.stringify({ $set: { 'oauth.access_token': $json.oauth.access_token, 'oauth.token_expiry': $json.oauth.token_expiry } }) }}",
+        "options": { "upsert": false }
+      },
+      "id": "eo-009-mongo-update-token",
+      "name": "MongoDB: Update Tokens",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [1920, 0],
+      "credentials": {
+        "mongoDb": {
+          "id": "1",
+          "name": "MongoDB - project_db"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "eo-010-noop-skip",
+      "name": "NoOp: Skip Update",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1920, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const creds = $('Code: Get Valid Token').first().json;\nconst req = $('Code: Validate Input').first().json;\n\nreturn req.recipients.map(recipient => ({\n  json: {\n    recipient,\n    credential_id: creds.credential_id,\n    client_name: creds.client_name || '',\n    provider: creds.provider,\n    access_token: creds.oauth.access_token,\n    from_email: creds.email_address,\n    from_name: req.from_name || creds.display_name || '',\n    reply_to: req.reply_to || '',\n    cc: req.cc || [],\n    bcc: req.bcc || [],\n    subject: req.subject,\n    body_html: req.body_html,\n    body_text: req.body_text || ''\n  }\n}));"
+      },
+      "id": "eo-011-prepare-recipients",
+      "name": "Code: Prepare Recipient Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "eo-012-split-batches",
+      "name": "SplitInBatches: Recipients",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2400, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\nconst recipientName = item.recipient.name || '';\nconst recipientEmail = item.recipient.email;\n\nconst subject = item.subject.replace(/\\{\\{name\\}\\}/gi, recipientName);\nconst bodyHtml = item.body_html.replace(/\\{\\{name\\}\\}/gi, recipientName);\nconst bodyText = (item.body_text || bodyHtml.replace(/<[^>]+>/g, '')).replace(/\\{\\{name\\}\\}/gi, recipientName);\nconst fromDisplay = item.from_name ? `${item.from_name} <${item.from_email}>` : item.from_email;\nconst toDisplay = recipientName ? `${recipientName} <${recipientEmail}>` : recipientEmail;\n\nif (item.provider === 'gmail') {\n  const boundary = `boundary_${Date.now()}`;\n  const headerLines = [\n    `From: ${fromDisplay}`,\n    `To: ${toDisplay}`,\n    item.cc && item.cc.length ? `Cc: ${item.cc.join(', ')}` : null,\n    item.bcc && item.bcc.length ? `Bcc: ${item.bcc.join(', ')}` : null,\n    item.reply_to ? `Reply-To: ${item.reply_to}` : null,\n    `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,\n    `MIME-Version: 1.0`,\n    `Content-Type: multipart/alternative; boundary=\"${boundary}\"`\n  ].filter(Boolean).join('\\r\\n');\n\n  const msgBody = [\n    `--${boundary}`,\n    `Content-Type: text/plain; charset=UTF-8`,\n    ``,\n    bodyText,\n    `--${boundary}`,\n    `Content-Type: text/html; charset=UTF-8`,\n    ``,\n    bodyHtml,\n    `--${boundary}--`\n  ].join('\\r\\n');\n\n  const raw = Buffer.from(`${headerLines}\\r\\n\\r\\n${msgBody}`)\n    .toString('base64')\n    .replace(/\\+/g, '-')\n    .replace(/\\//g, '_')\n    .replace(/=+$/, '');\n\n  return [{ json: { ...item, _subject: subject, payload: { raw } } }];\n}\n\n// Outlook / Microsoft Graph\nconst graphPayload = {\n  message: {\n    subject,\n    body: { contentType: 'HTML', content: bodyHtml },\n    toRecipients: [{ emailAddress: { address: recipientEmail, name: recipientName } }],\n    ccRecipients: (item.cc || []).map(a => ({ emailAddress: { address: a } })),\n    bccRecipients: (item.bcc || []).map(a => ({ emailAddress: { address: a } })),\n    replyTo: item.reply_to ? [{ emailAddress: { address: item.reply_to } }] : [],\n    from: { emailAddress: { address: item.from_email, name: item.from_name || '' } }\n  },\n  saveToSentItems: true\n};\n\nreturn [{ json: { ...item, _subject: subject, payload: graphPayload } }];"
+      },
+      "id": "eo-013-build-payload",
+      "name": "Code: Build Email Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 300]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.provider }}",
+        "rules": {
+          "rules": [
+            { "value2": "gmail", "operation": "equal" },
+            { "value2": "outlook", "operation": "equal" }
+          ]
+        },
+        "fallbackOutput": "none"
+      },
+      "id": "eo-014-switch-provider",
+      "name": "Switch: Provider",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [2880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "eo-015-http-gmail",
+      "name": "HTTP: Gmail Send",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3120, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/sendMail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "eo-016-http-outlook",
+      "name": "HTTP: Outlook Send",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3120, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Code: Build Email Payload').item.json;\nconst response = $json;\n\nlet messageId = null;\n// Gmail: response has { id, threadId }; Outlook: 202 empty body\nif (context.provider === 'gmail' && response.id) {\n  messageId = response.id;\n} else if (context.provider === 'outlook' && (response.statusCode === 202 || response.status === 202)) {\n  messageId = null; // Outlook 202 means accepted, no message id returned\n}\n\nreturn [{\n  json: {\n    recipient_email: context.recipient.email,\n    recipient_name: context.recipient.name || '',\n    provider: context.provider,\n    credential_id: context.credential_id,\n    status: 'sent',\n    message_id: messageId,\n    subject: context._subject,\n    sent_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "eo-017-normalize-result",
+      "name": "Code: Normalize Send Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3360, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allResults = $('Code: Normalize Send Result').all().map(i => i.json);\nconst creds = $('Code: Get Valid Token').first().json;\n\nconst summary = {\n  total: allResults.length,\n  sent: allResults.filter(r => r.status === 'sent').length,\n  failed: allResults.filter(r => r.status === 'failed').length\n};\n\nreturn [{\n  json: {\n    credential_id: creds.credential_id,\n    client_name: creds.client_name || '',\n    provider: creds.provider,\n    sent_at: new Date().toISOString(),\n    summary,\n    results: allResults\n  }\n}];"
+      },
+      "id": "eo-018-aggregate",
+      "name": "Code: Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3600, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insertOne",
+        "collection": "email_activity_log",
+        "fields": "credential_id, client_name, provider, sent_at, summary, results",
+        "options": {}
+      },
+      "id": "eo-019-mongo-log",
+      "name": "MongoDB: Log Activity",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [3840, 300],
+      "credentials": {
+        "mongoDb": {
+          "id": "1",
+          "name": "MongoDB - project_db"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, summary: $('Code: Aggregate Results').first().json.summary, results: $('Code: Aggregate Results').first().json.results }) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "eo-020-respond-200",
+      "name": "Respond: 200 Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [4080, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Code: Validate Input", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code: Validate Input": {
+      "main": [
+        [{ "node": "MongoDB: Fetch Credentials", "type": "main", "index": 0 }]
+      ]
+    },
+    "MongoDB: Fetch Credentials": {
+      "main": [
+        [{ "node": "Code: Handle DB Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code: Handle DB Result": {
+      "main": [
+        [{ "node": "IF: Credentials Found", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF: Credentials Found": {
+      "main": [
+        [{ "node": "Code: Get Valid Token", "type": "main", "index": 0 }],
+        [{ "node": "Respond: 404 Not Found", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code: Get Valid Token": {
+      "main": [
+        [{ "node": "IF: Token Refreshed", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF: Token Refreshed": {
+      "main": [
+        [{ "node": "MongoDB: Update Tokens", "type": "main", "index": 0 }],
+        [{ "node": "NoOp: Skip Update", "type": "main", "index": 0 }]
+      ]
+    },
+    "MongoDB: Update Tokens": {
+      "main": [
+        [{ "node": "Code: Prepare Recipient Items", "type": "main", "index": 0 }]
+      ]
+    },
+    "NoOp: Skip Update": {
+      "main": [
+        [{ "node": "Code: Prepare Recipient Items", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code: Prepare Recipient Items": {
+      "main": [
+        [{ "node": "SplitInBatches: Recipients", "type": "main", "index": 0 }]
+      ]
+    },
+    "SplitInBatches: Recipients": {
+      "main": [
+        [{ "node": "Code: Build Email Payload", "type": "main", "index": 0 }],
+        [{ "node": "Code: Aggregate Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code: Build Email Payload": {
+      "main": [
+        [{ "node": "Switch: Provider", "type": "main", "index": 0 }]
+      ]
+    },
+    "Switch: Provider": {
+      "main": [
+        [{ "node": "HTTP: Gmail Send", "type": "main", "index": 0 }],
+        [{ "node": "HTTP: Outlook Send", "type": "main", "index": 0 }]
+      ]
+    },
+    "HTTP: Gmail Send": {
+      "main": [
+        [{ "node": "Code: Normalize Send Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "HTTP: Outlook Send": {
+      "main": [
+        [{ "node": "Code: Normalize Send Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code: Normalize Send Result": {
+      "main": [
+        [{ "node": "SplitInBatches: Recipients", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code: Aggregate Results": {
+      "main": [
+        [{ "node": "MongoDB: Log Activity", "type": "main", "index": 0 }]
+      ]
+    },
+    "MongoDB: Log Activity": {
+      "main": [
+        [{ "node": "Respond: 200 Success", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "errorWorkflow": "",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "executionTimeout": 300,
+    "timezone": "UTC"
+  },
+  "tags": [
+    { "name": "email" },
+    { "name": "outreach" },
+    { "name": "production" }
+  ]
+}

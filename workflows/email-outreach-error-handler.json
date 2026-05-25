@@ -1,0 +1,65 @@
+{
+  "name": "Email Outreach - Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "eh-001-error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const execData = $json;\n\nreturn [{\n  json: {\n    workflow_name: 'email-outreach',\n    execution_id: execData.execution?.id || 'unknown',\n    error_message: execData.error?.message || 'Unknown error',\n    error_name: execData.error?.name || 'Error',\n    node_name: execData.execution?.lastNodeExecuted || 'unknown',\n    timestamp: new Date().toISOString(),\n    raw_error: JSON.stringify(execData.error || {})\n  }\n}];"
+      },
+      "id": "eh-002-format-error",
+      "name": "Code: Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insertOne",
+        "collection": "workflow_error_log",
+        "fields": "workflow_name, execution_id, error_message, error_name, node_name, timestamp, raw_error",
+        "options": {}
+      },
+      "id": "eh-003-log-mongo",
+      "name": "MongoDB: Log Error",
+      "type": "n8n-nodes-base.mongoDb",
+      "typeVersion": 1,
+      "position": [720, 300],
+      "credentials": {
+        "mongoDb": {
+          "id": "1",
+          "name": "MongoDB - project_db"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [{ "node": "Code: Format Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code: Format Error": {
+      "main": [
+        [{ "node": "MongoDB: Log Error", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "executionTimeout": 60,
+    "timezone": "UTC"
+  },
+  "tags": [
+    { "name": "email" },
+    { "name": "outreach" },
+    { "name": "production" }
+  ]
+}
