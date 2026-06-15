@@ -116,3 +116,41 @@ class GenerateAndSendRequest(BaseModel):
         if not self.campaign_description.strip():
             raise ValueError("campaign_description is required")
         return self
+
+
+class CampaignCreateRequest(BaseModel):
+    credential_id: str
+    campaign_description: str
+    recipients: list[RecipientWithDescription]
+    knowledge_base_id: str = ""
+    from_name: str = ""
+    reply_to: str = ""
+    cc: list[str] = []
+    bcc: list[str] = []
+    calendar_credential_id: str = ""
+
+    @model_validator(mode="after")
+    def _check(self):
+        if not self.recipients:
+            raise ValueError("recipients must not be empty")
+        if not self.campaign_description.strip():
+            raise ValueError("campaign_description is required")
+        return self
+
+
+class CampaignCreateResponse(BaseModel):
+    campaign_id: str
+    status: str   # always "running"
+    total: int
+
+
+class CampaignStatusResponse(BaseModel):
+    campaign_id: str
+    status: str   # "running" | "completed" | "stopped" | "failed"
+    total: int
+    sent: int
+    failed: int
+    current_index: int
+    results: list[SendResult]
+    started_at: str
+    completed_at: str | None = None

@@ -1,7 +1,13 @@
+import uuid
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException
 
 from app.src.graphs.email_outreach import email_outreach_graph, email_preview_graph
 from app.src.models.email_models import (
+    CampaignCreateRequest,
+    CampaignCreateResponse,
+    CampaignStatusResponse,
     EmailOutreachRequest,
     EmailOutreachResponse,
     EmailPreviewRequest,
@@ -11,6 +17,7 @@ from app.src.models.email_models import (
     OutreachSummary,
     SendResult,
 )
+from app.src.services.mongodb import get_db
 
 router = APIRouter(prefix="/outreach", tags=["Email Outreach"])
 
@@ -162,3 +169,109 @@ async def generate_and_send(request: GenerateAndSendRequest) -> EmailOutreachRes
         summary=OutreachSummary(**result["summary"]),
         results=[SendResult(**r) for r in result["send_results"]],
     )
+
+
+# ── Background campaign endpoints ─────────────────────────────────────────────
+
+@router.post("/campaigns", response_model=CampaignCreateResponse, status_code=202)
+async def create_campaign(request: CampaignCreateRequest) -> CampaignCreateResponse:
+    """
+    Launch a background email campaign. Returns immediately with a campaign_id.
+
+    The campaign runs in the background — AI generation and sending happen
+    per-recipient (generate one → send it → next). Poll GET /outreach/campaigns/{id}
+    to track progress. Stop via POST /outreach/campaigns/{id}/stop.
+    """
+    from app.src.services.campaign_runner import launch_campaign
+
+    campaign_id = str(uuid.uuid4())
+    recipients = [r.model_dump() for r in request.recipients]
+    started_at = datetime.now(timezone.utc).isoformat()
+
+    db = get_db()
+    await db.email_campaigns.insert_one({
+        "campaign_id": campaign_id,
+        "credential_id": request.credential_id,
+        "status": "running",
+        "total": len(recipients),
+        "sent": 0,
+        "failed": 0,
+        "current_index": 0,
+        "results": [],
+        "started_at": started_at,
+        "completed_at": None,
+    })
+
+    launch_campaign(
+        campaign_id=campaign_id,
+        credential_id=request.credential_id,
+        campaign_description=request.campaign_description,
+        recipients=recipients,
+        kb_id=request.knowledge_base_id,
+        from_name=request.from_name,
+        reply_to=request.reply_to,
+        cc=request.cc,
+        bcc=request.bcc,
+        calendar_credential_id=request.calendar_credential_id,
+    )
+
+    return CampaignCreateResponse(
+        campaign_id=campaign_id,
+        status="running",
+        total=len(recipients),
+    )
+
+
+@router.get("/campaigns/{campaign_id}", response_model=CampaignStatusResponse)
+async def get_campaign_status(campaign_id: str) -> CampaignStatusResponse:
+    """Poll the progress of a running or finished campaign."""
+    db = get_db()
+    doc = await db.email_campaigns.find_one({"campaign_id": campaign_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Campaign {campaign_id!r} not found")
+    return CampaignStatusResponse(
+        campaign_id=doc["campaign_id"],
+        status=doc["status"],
+        total=doc["total"],
+        sent=doc["sent"],
+        failed=doc["failed"],
+        current_index=doc["current_index"],
+        results=[SendResult(**r) for r in doc.get("results", [])],
+        started_at=doc["started_at"],
+        completed_at=doc.get("completed_at"),
+    )
+
+
+@router.post("/campaigns/{campaign_id}/stop")
+async def stop_campaign(campaign_id: str):
+    """
+    Send a stop signal to a running campaign.
+
+    The campaign stops after the current recipient finishes (no mid-send interruption).
+    Poll GET /outreach/campaigns/{id} until status = "stopped" to confirm.
+    """
+    from app.src.services.campaign_runner import stop_campaign as _stop_campaign
+
+    db = get_db()
+    doc = await db.email_campaigns.find_one({"campaign_id": campaign_id}, {"_id": 0, "status": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Campaign {campaign_id!r} not found")
+
+    if doc["status"] != "running":
+        return {"campaign_id": campaign_id, "status": doc["status"], "message": "Campaign is not running"}
+
+    stopped = _stop_campaign(campaign_id)
+    if not stopped:
+        # Task finished naturally between the DB check and the stop call
+        updated = await db.email_campaigns.find_one({"campaign_id": campaign_id}, {"_id": 0, "status": 1})
+        return {
+            "campaign_id": campaign_id,
+            "status": (updated or {}).get("status", "completed"),
+            "message": "Campaign already finished",
+        }
+
+    return {
+        "campaign_id": campaign_id,
+        "status": "stopping",
+        "message": "Stop signal sent. Poll GET /outreach/campaigns/{id} to confirm.",
+    }

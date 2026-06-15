@@ -288,21 +288,21 @@ async def fetch_knowledge_base(state: EmailOutreachState) -> dict:
     return {"knowledge_base_content": content}
 
 
-async def generate_personalized_emails(state: EmailOutreachState) -> dict:
-    """Uses LangChain + GPT-4o-mini to generate a personalized email per recipient.
+async def generate_one_email(
+    recipient: dict,
+    campaign_description: str,
+    kb_id: str,
+    general_kb: str,
+) -> dict:
+    """Generate a single personalized email for one recipient via GPT-4o-mini.
 
-    Per-recipient Qdrant search (recipient description as query) is layered on top of
-    the general campaign KB context so each email gets the most relevant knowledge chunks.
+    Returns a dict with keys: recipient_email, recipient_name, subject, body_html, body_text.
+    Used by both the LangGraph node and the background campaign runner.
     """
     from langchain_openai import ChatOpenAI
     from langchain_core.prompts import ChatPromptTemplate
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
-
-    general_kb = (state.get("knowledge_base_content") or "")[:2000]
-    campaign_description = state.get("campaign_description") or ""
-    kb_id = state.get("knowledge_base_id", "").strip()
-
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You are an expert B2B email copywriter.
 
@@ -321,51 +321,59 @@ No markdown, no code fences, no extra keys — pure JSON only."""),
         ("human", "Name: {name}\nEmail: {email}\nBackground: {description}"),
     ])
 
+    recipient_chunks: list[str] = []
+    if kb_id:
+        try:
+            query = f"{campaign_description} {recipient.get('description', '')}".strip()
+            recipient_chunks = await _qdrant_search(kb_id, query, limit=4)
+        except Exception:
+            pass
+
+    combined_chunks = recipient_chunks or ([general_kb] if general_kb else [])
+    kb_content = "\n\n".join(combined_chunks)[:3000]
+
+    chain = prompt | llm
+    response = await chain.ainvoke({
+        "campaign_description": campaign_description,
+        "kb_content": kb_content,
+        "name": recipient.get("name", ""),
+        "email": recipient.get("email", ""),
+        "description": recipient.get("description") or "No specific details provided.",
+    })
+
+    text = response.content.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+
+    try:
+        email_data = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            raise ValueError(
+                f"LLM did not return valid JSON for {recipient.get('email')}: {text[:200]}"
+            )
+        email_data = json.loads(match.group())
+
+    return {
+        "recipient_email": recipient["email"],
+        "recipient_name": recipient.get("name", ""),
+        "subject": email_data.get("subject", "Hello"),
+        "body_html": email_data.get("body_html", ""),
+        "body_text": email_data.get("body_text", ""),
+    }
+
+
+async def generate_personalized_emails(state: EmailOutreachState) -> dict:
+    """Uses LangChain + GPT-4o-mini to generate a personalized email per recipient."""
+    general_kb = (state.get("knowledge_base_content") or "")[:2000]
+    campaign_description = state.get("campaign_description") or ""
+    kb_id = state.get("knowledge_base_id", "").strip()
+
     generated: list[dict] = []
     for r in state["recipients"]:
-        # Per-recipient Qdrant search for tailored context (best-effort)
-        recipient_chunks: list[str] = []
-        if kb_id:
-            try:
-                query = f"{campaign_description} {r.get('description', '')}".strip()
-                recipient_chunks = await _qdrant_search(kb_id, query, limit=4)
-            except Exception:
-                pass
-
-        # Combine per-recipient chunks with general KB context (deduplicated)
-        combined_chunks = recipient_chunks or [general_kb] if general_kb else recipient_chunks
-        kb_content = "\n\n".join(combined_chunks)[:3000]
-
-        chain = prompt | llm
-        response = await chain.ainvoke({
-            "campaign_description": campaign_description,
-            "kb_content": kb_content,
-            "name": r.get("name", ""),
-            "email": r.get("email", ""),
-            "description": r.get("description") or "No specific details provided.",
-        })
-
-        text = response.content.strip()
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-
-        try:
-            email_data = json.loads(text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            if not match:
-                raise ValueError(
-                    f"LLM did not return valid JSON for {r.get('email')}: {text[:200]}"
-                )
-            email_data = json.loads(match.group())
-
-        generated.append({
-            "recipient_email": r["email"],
-            "recipient_name": r.get("name", ""),
-            "subject": email_data.get("subject", "Hello"),
-            "body_html": email_data.get("body_html", ""),
-            "body_text": email_data.get("body_text", ""),
-        })
+        gen = await generate_one_email(r, campaign_description, kb_id, general_kb)
+        generated.append(gen)
 
     return {"generated_emails": generated}
 
