@@ -1,0 +1,26 @@
+# Core orchestration
+langgraph>=0.2.50
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+
+# Data validation / settings
+pydantic>=2.7
+pydantic-settings>=2.3
+
+# HTTP + parsing
+httpx>=0.27
+feedparser>=6.0          # Google Trends RSS
+
+# Optional integrations (guarded — only needed if the feature is enabled)
+qdrant-client>=1.9       # RAG vector store
+gspread>=6.0             # Google Sheets storage / config
+google-auth>=2.30        # service-account auth for gspread
+notion-client>=2.2       # Notion reporting
+
+# Instagram Growth Agent (guarded — only needed if the feature is enabled)
+instagrapi>=2.1            # follow/unfollow via Instagram private API
+pymongo>=4.6              # credential store (also pulled in by motor)
+cryptography>=42.0        # Fernet decryption of credentials at rest
+
+python-dotenv>=1.0

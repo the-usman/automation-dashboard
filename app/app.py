@@ -8,6 +8,7 @@ from app.src.routes.workflow import router as workflow_router
 from app.src.routes.email_outreach import router as outreach_router
 from app.src.routes.tracking import router as tracking_router
 from app.src.routes.calendar import router as calendar_router
+from app.src.routes.growth import router as growth_router
 from app.src.services.reply_scheduler import reply_check_loop
 
 
@@ -35,3 +36,4 @@ app.include_router(workflow_router)
 app.include_router(outreach_router)
 app.include_router(tracking_router)
 app.include_router(calendar_router)
+app.include_router(growth_router)

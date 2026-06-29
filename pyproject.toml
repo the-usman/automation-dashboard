@@ -19,4 +19,6 @@ dependencies = [
     "cryptography>=42.0.0",
     "qdrant-client>=1.18.0",
     "tzdata>=2026.2",
+    "instagrapi>=2.1.0",
+    "pymongo>=4.6.0",
 ]
