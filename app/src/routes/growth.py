@@ -18,6 +18,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
+from app.src.models.campaign_models import (
+    CampaignCreatedResponse,
+    CampaignRequest,
+    CampaignResultsResponse,
+    CampaignStatusResponse,
+)
 from app.src.models.growth_models import (
     ActionTaskCreatedResponse,
     ActionTaskRequest,
@@ -26,6 +32,7 @@ from app.src.models.growth_models import (
     RecommendRequest,
     RecommendResponse,
 )
+from app.src.services.instagram_campaign_runner import launch_campaign, stop_campaign
 from app.src.services.instagram_task_runner import launch_action_task, stop_action_task
 from app.src.services.mongodb import get_db
 from social_trend_analyzer.growth import run as run_growth
@@ -157,4 +164,111 @@ async def cancel_task(task_id: str):
         "task_id": task_id,
         "status": "stopping",
         "message": "Stop signal sent. Poll GET /growth/tasks/{id} to confirm.",
+    }
+
+
+# ── Campaigns: description → competitors → auto-follow (background) ────────────
+@router.post("/campaigns", response_model=CampaignCreatedResponse, status_code=202)
+async def create_campaign(req: CampaignRequest) -> CampaignCreatedResponse:
+    """
+    Start a growth campaign from a **product description** alone. Returns immediately
+    with a campaign_id; the work runs in the background:
+    discover competitors → harvest their post commenters → follow up to
+    `total_follows` users (respecting the per-action delay and daily cap).
+
+    Poll GET /growth/campaigns/{id} for progress, GET .../results for the full
+    outcome, and POST .../cancel to stop.
+    """
+    campaign_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc).isoformat()
+
+    db = get_db()
+    await db.instagram_campaigns.insert_one({
+        "campaign_id": campaign_id,
+        "credential_id": req.credential_id,
+        "product_description": req.product_description,
+        "status": "running",
+        "stage": "discovering",
+        "total_target": req.total_follows,
+        "competitors": [],
+        "competitors_found": 0,
+        "candidates_found": 0,
+        "results": [],
+        "done": 0,
+        "success": 0,
+        "skipped": 0,
+        "failed": 0,
+        "current_index": 0,
+        "started_at": started_at,
+        "completed_at": None,
+        "error": None,
+    })
+
+    launch_campaign(campaign_id, req)
+
+    return CampaignCreatedResponse(
+        campaign_id=campaign_id,
+        status="running",
+        total_target=req.total_follows,
+    )
+
+
+@router.get("/campaigns/{campaign_id}", response_model=CampaignStatusResponse)
+async def get_campaign_status(campaign_id: str) -> CampaignStatusResponse:
+    """Progress of a campaign: stage, competitors found, and follows done so far."""
+    db = get_db()
+    doc = await db.instagram_campaigns.find_one(
+        {"campaign_id": campaign_id}, {"_id": 0, "competitors": 0, "results": 0, "product_description": 0}
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Campaign {campaign_id!r} not found")
+    return CampaignStatusResponse(**doc)
+
+
+@router.get("/campaigns/{campaign_id}/results", response_model=CampaignResultsResponse)
+async def get_campaign_results(campaign_id: str) -> CampaignResultsResponse:
+    """Full results: competitors discovered and every user this campaign followed."""
+    db = get_db()
+    doc = await db.instagram_campaigns.find_one({"campaign_id": campaign_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Campaign {campaign_id!r} not found")
+    return CampaignResultsResponse(
+        campaign_id=doc["campaign_id"],
+        status=doc["status"],
+        product_description=doc.get("product_description", ""),
+        total_target=doc.get("total_target", 0),
+        competitors=doc.get("competitors", []),
+        results=doc.get("results", []),
+        success=doc.get("success", 0),
+        skipped=doc.get("skipped", 0),
+        failed=doc.get("failed", 0),
+        started_at=doc.get("started_at", ""),
+        completed_at=doc.get("completed_at"),
+    )
+
+
+@router.post("/campaigns/{campaign_id}/cancel")
+async def cancel_campaign(campaign_id: str):
+    """Send a stop signal to a running campaign (stops before the next follow)."""
+    db = get_db()
+    doc = await db.instagram_campaigns.find_one({"campaign_id": campaign_id}, {"_id": 0, "status": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Campaign {campaign_id!r} not found")
+
+    if doc["status"] != "running":
+        return {"campaign_id": campaign_id, "status": doc["status"], "message": "Campaign is not running"}
+
+    stopped = stop_campaign(campaign_id)
+    if not stopped:
+        updated = await db.instagram_campaigns.find_one({"campaign_id": campaign_id}, {"_id": 0, "status": 1})
+        return {
+            "campaign_id": campaign_id,
+            "status": (updated or {}).get("status", "completed"),
+            "message": "Campaign already finished",
+        }
+
+    return {
+        "campaign_id": campaign_id,
+        "status": "stopping",
+        "message": "Stop signal sent. Poll GET /growth/campaigns/{id} to confirm.",
     }

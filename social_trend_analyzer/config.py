@@ -87,6 +87,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "ig_daily_action_cap": 150,        # hard ceiling on actions per run (stay 150-200/day)
     "growth_search_limit": 50,         # Apify resultsLimit for discovery scrapes
     "growth_min_score": 60,            # default LLM cutoff for action="follow"
+    "growth_keyword_limit": 8,         # max keywords derived from a product description
+    "growth_competitor_limit": 10,     # max competitor accounts returned per discovery
 }
 
 

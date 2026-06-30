@@ -11,6 +11,7 @@ Public API:
     run({"mode": "discover_competitor", "competitor_url": "https://instagram.com/...",
          "product_description": "..."})
 """
+from .competitors import discover_competitors, extract_keywords
 from .graph import GROWTH_GRAPH, run
 
-__all__ = ["run", "GROWTH_GRAPH"]
+__all__ = ["run", "GROWTH_GRAPH", "discover_competitors", "extract_keywords"]

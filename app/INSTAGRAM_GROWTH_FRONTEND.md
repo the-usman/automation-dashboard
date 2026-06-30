@@ -304,4 +304,4 @@ errors (`400`/`404`) `detail` is a plain string.
 - **Cancel is cooperative**, not instant. Don't assume `stopped` the moment you
   call cancel; confirm via polling.
 - **Counters are authoritative from `GET /tasks/{id}`**, not from the create
-  response — always render progress from the poll payload.
+  response — always render progress from the poll payloa
