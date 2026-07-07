@@ -124,9 +124,18 @@ def discover_competitors(
     (occurrence frequency + summed post engagement), since the actor does not
     reliably return follower counts.
     """
+    if not get_settings().apify_token:
+        log.warning(
+            "discover_competitors: no Apify token (set TREND_APIFY_TOKEN) — "
+            "cannot scrape hashtags, returning 0 competitors"
+        )
+        return CompetitorList(competitors=[])
+
     keywords = extract_keywords(product_description, config)
     if not keywords:
+        log.warning("discover_competitors: no keywords derived from description %r", product_description)
         return CompetitorList(competitors=[])
+    log.info("discover_competitors: %d keywords -> %s", len(keywords), ", ".join(keywords))
 
     results_limit = int(config.get("growth_search_limit", 50))
     top_n = int(limit or config.get("growth_competitor_limit", 10))
@@ -135,6 +144,12 @@ def discover_competitors(
         _ig_actor(config),
         {"resultsType": "posts", "directUrls": tag_urls, "resultsLimit": results_limit},
     )
+    log.info("discover_competitors: Apify returned %d posts across %d hashtags", len(items), len(tag_urls))
+    if not items:
+        log.warning(
+            "discover_competitors: Apify returned 0 posts — check the console for an "
+            "'APIFY ...' warning above (bad token, actor run failed, or hashtags had no posts)"
+        )
 
     agg: dict[str, dict] = {}
     for it in items:

@@ -10,3 +10,7 @@ wheels/
 .venv
 
 .env
+
+# Growth campaign activity logs + Instagram sessions
+logs/
+.ig_sessions/

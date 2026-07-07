@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     ig_credential_collection: str = "instagram_accounts"
     fernet_key: str = ""
     ig_session_dir: str = "./.ig_sessions"
+    # Growth campaigns write a per-campaign activity log (timestamped) here:
+    # discovery/harvest results, Instagram suggestions, and every follow.
+    growth_log_dir: str = "./logs/growth"
 
     def has_openai(self) -> bool:
         return bool(self.openai_api_key)
@@ -83,12 +86,29 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "apify_actor_facebook": "",
     "apify_actor_linkedin": "",
     # --- Instagram Growth Agent tuning knobs ---
-    "ig_action_delay_seconds": 4,      # sleep between follow/unfollow (3-5s recommended)
+    "ig_action_delay_seconds": 4,      # small floor sleep inside the client after an action
+    # Long, randomized gap the CAMPAIGN waits between follows so Instagram does not
+    # rate-limit (429) or block the device. Default 5-10 min → a batch spreads across
+    # the day. Tune down only for tiny test runs.
+    "ig_follow_min_seconds": 300,      # 5 minutes
+    "ig_follow_max_seconds": 600,      # 10 minutes
+    "ig_read_delay_seconds": 8,        # sleep between READ calls (hashtag/comments/likers) — larger than actions; reads trigger anti-bot faster
+    "ig_delay_jitter_seconds": 4,      # random extra 0..N sec added to every delay so it isn't robotic
     "ig_daily_action_cap": 150,        # hard ceiling on actions per run (stay 150-200/day)
     "growth_search_limit": 50,         # Apify resultsLimit for discovery scrapes
     "growth_min_score": 60,            # default LLM cutoff for action="follow"
     "growth_keyword_limit": 8,         # max keywords derived from a product description
     "growth_competitor_limit": 10,     # max competitor accounts returned per discovery
+    # Read-volume caps — the single biggest cause of session logouts is fetching
+    # ALL comments/likers of every post. Keep these small.
+    "growth_hashtags_max": 6,          # max distinct hashtags to scan for competitors
+    "growth_posts_per_hashtag": 10,    # top posts pulled per hashtag
+    "growth_comments_per_post": 25,    # cap comments read per post (never "all")
+    "growth_likers_per_post": 25,      # cap likers read per post (never "all")
+    # instagram_suggested mode — reload the "Suggested for you" list until the
+    # follow target is met, then stop and report partial.
+    "growth_suggested_max_empty_reloads": 5,  # consecutive reloads with no new users before giving up
+    "growth_suggested_max_reloads": 40,       # absolute hard cap on reload calls
 }
 
 

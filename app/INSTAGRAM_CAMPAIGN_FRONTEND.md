@@ -61,10 +61,17 @@
 
   ### Request body
 
+  > **CHANGED:** the campaign now authenticates with a browser **`sessionid`** cookie
+  > passed directly in the request — no pre-stored credential needed. (`credential_id`
+  > still works as an alternative, but `sessionid` is preferred.) **Exactly one of
+  > `sessionid` / `credential_id` is required.** The `sessionid` is used only to log in
+  > for this campaign and is **never stored** — the session is discarded when the
+  > campaign finishes.
+
   ```jsonc
   {
     "product_description": "organic vegan skincare for sensitive skin", // required, min 3 chars
-    "credential_id": "acct_123",   // required — which IG account follows (see "Credentials")
+    "sessionid": "71234567%3AAbCd...%3A12%3A...", // the IG account's browser sessionid cookie
     "total_follows": 50,           // 1–500, how many users to follow this campaign
     "days": 2,                     // 1–30, intended spread (multi-day pacing = later milestone)
     "sources": ["commenters"],     // candidate sources; "commenters" supported today
@@ -76,12 +83,21 @@
   | Field | Type | Required | Default | Notes |
   |-------|------|----------|---------|-------|
   | `product_description` | string | yes | — | min length 3 |
-  | `credential_id` | string | yes | — | id of a stored IG account |
+  | `sessionid` | string | yes* | `""` | IG `sessionid` cookie; *required unless `credential_id` is given |
+  | `credential_id` | string | yes* | `""` | alternative to `sessionid`: id of a stored IG account |
   | `total_follows` | int | no | `50` | 1–500 |
   | `days` | int | no | `1` | 1–30 |
   | `sources` | string[] | no | `["commenters"]` | currently only `commenters` |
   | `n_posts` | int | no | `5` | 1–20 |
   | `competitor_limit` | int \| null | no | `null` | 1–50 |
+
+  \* Provide **either** `sessionid` **or** `credential_id`. Omitting both → `422`.
+
+  **How the frontend gets the `sessionid`:** the user logs into instagram.com in their
+  browser, opens DevTools → Application → Cookies → `https://www.instagram.com`, and
+  copies the value of the **`sessionid`** cookie. Your UI collects that string in a
+  password-type field and sends it as `sessionid`. Treat it as a secret — send only over
+  HTTPS, never log it, never render it back.
 
   ### Response `202`
 
@@ -94,7 +110,8 @@
   ```ts
   async function startCampaign(body: {
     product_description: string;
-    credential_id: string;
+    sessionid: string;          // IG sessionid cookie (or use credential_id instead)
+    credential_id?: string;
     total_follows?: number;
     days?: number;
     sources?: string[];

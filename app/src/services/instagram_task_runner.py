@@ -80,9 +80,12 @@ async def _run_action_task(
                       **extra}},
         )
 
+    logger.info("Task %s: START — action=%s users=%d", task_id, action, len(usernames))
+
     # 1. Load + decrypt credential
     cred = await _load_credential(db, credential_id)
     if cred is None:
+        logger.warning("Task %s: credential %r not found", task_id, credential_id)
         await _mark("failed", error=f"Credential {credential_id!r} not found")
         return
 
@@ -97,19 +100,27 @@ async def _run_action_task(
         return
 
     # 3. Per-username loop: act → record progress
-    for username in usernames:
+    total = len(usernames)
+    for idx, username in enumerate(usernames, start=1):
         if stop_event.is_set():
+            logger.info("Task %s: stop requested — halting at %d/%d", task_id, idx - 1, total)
             await _mark("stopped")
             return
         try:
             fn = client.follow if action == "follow" else client.unfollow
             result = await asyncio.to_thread(fn, username)
             row = result.model_dump()
+            logger.info(
+                "Task %s: [%d/%d] %s @%s -> %s%s",
+                task_id, idx, total, action, username, row["status"],
+                f" ({row['message']})" if row.get("message") else "",
+            )
         except asyncio.CancelledError:
+            logger.info("Task %s: cancelled at %d/%d", task_id, idx, total)
             await _mark("stopped")
             raise
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Task %s: error on %s", task_id, username)
+            logger.exception("Task %s: [%d/%d] error on @%s", task_id, idx, total, username)
             row = {"username": username, "action": action, "status": "error", "user_id": "", "message": str(exc)}
 
         await db.instagram_tasks.update_one(
@@ -127,4 +138,5 @@ async def _run_action_task(
         )
 
     # 4. Done
+    logger.info("Task %s: DONE — %d users processed", task_id, total)
     await _mark("completed")

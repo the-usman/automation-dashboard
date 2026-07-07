@@ -1,0 +1,2620 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Phase 1 · Triggers\nManual, scheduled, and webhook entry points converge into one initialized run context.",
+        "height": 140,
+        "width": 560,
+        "color": 4
+      },
+      "id": "729c86f6-9bab-498c-921f-0aceee095830",
+      "name": "Phase 1 · Triggers",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -9472,
+        -1328
+      ],
+      "executeOnce": false,
+      "notes": "Sticky note labeling Phase 1 · Triggers."
+    },
+    {
+      "parameters": {},
+      "id": "9f5be9fe-a976-4d23-a56e-0532eabdc049",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -9424,
+        -1136
+      ],
+      "executeOnce": false,
+      "notes": "Starts the workflow manually for operator testing."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "b6fe3aa2-27d7-4bcd-ad1a-9e63e45e22bf",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -9424,
+        -1024
+      ],
+      "executeOnce": false,
+      "notes": "Runs weekly Monday at 9am by default; override guidance is in the README."
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "social-media-trend-analyzer",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "040a654b-1470-4c94-bd93-fa69765f6117",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -9424,
+        -896
+      ],
+      "executeOnce": false,
+      "webhookId": "d038d173-6a6b-422e-9b6b-b0aa2719b031",
+      "notes": "Accepts POST payloads with mode, client_id, deep_dive, platforms, and lookback overrides."
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "c6f2155a-bd9f-4025-9b6e-ea7549e12bb6",
+      "name": "Merge · Trigger Inputs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -9136,
+        -1024
+      ],
+      "executeOnce": false,
+      "notes": "Combines all trigger entry points into one stream."
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nreturn items.map((item) => {\n  try {\n    const body = item.json.body || item.json || {};\n    const headers = item.json.headers || {};\n    const trigger_source = body.mode || headers['x-n8n-webhook-id'] ? 'webhook' : ($workflow?.active ? 'schedule' : 'manual');\n    return {\n      json: {\n        ...item.json,\n        webhook_payload: body,\n        run_id: crypto.randomUUID(),\n        run_started_at: new Date().toISOString(),\n        trigger_source,\n        mode: body.mode === 'client00' ? 'client00' : 'client',\n        deep_dive: body.deep_dive === true,\n        platform_filter: Array.isArray(body.platforms) ? body.platforms : [],\n        lookback_days_override: body.lookback_days_override || null,\n        webhook_client_id: body.client_id || ''\n      }\n    };\n  } catch (error) {\n    return { json: { ...item.json, _errors: [{ node_name: 'Initialize Run', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "a9d989af-ac34-4eac-9466-cb4083c46b5b",
+      "name": "Initialize Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8864,
+        -1024
+      ],
+      "executeOnce": false,
+      "notes": "Creates run_id, timestamps, trigger source, and normalized webhook options."
+    },
+    {
+      "parameters": {
+        "content": "## Phase 2 · Routing And Client Context\nLoad runtime config, then branch early into Client mode or Client00 market-scan mode.",
+        "height": 140,
+        "width": 660,
+        "color": 4
+      },
+      "id": "4c1b40c1-be9d-40cb-ab10-cacfc9b74aa2",
+      "name": "Phase 2 · Routing And Client Context",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -8640,
+        -1120
+      ],
+      "executeOnce": false,
+      "notes": "Sticky note labeling Phase 2 · Routing And Client Context."
+    },
+    {
+      "parameters": {
+        "content": "### Client vs Client00 split\nClient mode loops over active Clients rows and enables per-client RAG. Client00 mode creates a general market context tagged `client00` and skips RAG.",
+        "height": 180,
+        "width": 520,
+        "color": 5
+      },
+      "id": "29b94c6a-e96a-4f46-b26f-c3f2c10dab00",
+      "name": "Mode Split Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -8064,
+        -1296
+      ],
+      "executeOnce": false,
+      "notes": "Sticky note labeling Mode Split Note."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.TREND_ANALYZER_GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "0472de46-5739-4d2e-a41f-2733f25a2f54",
+      "name": "Load Config",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        -8576,
+        -1024
+      ],
+      "executeOnce": false,
+      "notes": "Reads from the Config tab using the configured Google Sheet."
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const config = {};\n  for (const item of items) {\n    const key = item.json.key || item.json.Key || item.json.name;\n    const value = item.json.value ?? item.json.Value ?? item.json.setting;\n    if (key) config[String(key).trim()] = value;\n  }\n  const passthrough = items[0]?.json || {};\n  return [{ json: { ...passthrough, config } }];\n} catch (error) {\n  return [{ json: { config: {}, _errors: [{ node_name: 'Parse Config', error_message: error.message, payload_snippet: JSON.stringify(items).slice(0, 500) }] } }];\n}"
+      },
+      "id": "ca9ec382-6b26-45a4-83e4-5ff4e68a7147",
+      "name": "Parse Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8304,
+        -1024
+      ],
+      "executeOnce": false,
+      "notes": "Flattens key-value Config rows into a single config object."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.mode}}",
+                    "operation": "equals",
+                    "rightValue": "client"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Client Mode"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.mode}}",
+                    "operation": "equals",
+                    "rightValue": "client00"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Client00 Mode"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 0
+        }
+      },
+      "id": "52b81cc8-2509-4e1e-a4ab-b56cae5be2a3",
+      "name": "Mode Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -8016,
+        -1024
+      ],
+      "executeOnce": false,
+      "notes": "Routes the run into Client mode or Client00 market-scan mode."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.TREND_ANALYZER_GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clients",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "80126844-5657-4df7-8d2f-42f65314bf75",
+      "name": "Load Clients",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        -7744,
+        -1136
+      ],
+      "executeOnce": false,
+      "notes": "Reads from the Clients tab using the configured Google Sheet."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{String($json.active).toLowerCase()}}",
+              "operation": "equals",
+              "rightValue": "true"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "02c1e9e8-9895-4fd9-b749-fb1ddd60edb3",
+      "name": "Filter Active Clients",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -7456,
+        -1136
+      ],
+      "executeOnce": false,
+      "notes": "Allows only Clients rows where active is true."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "or",
+          "conditions": [
+            {
+              "leftValue": "={{$json.webhook_client_id || \"\"}}",
+              "operation": "isEmpty"
+            },
+            {
+              "leftValue": "={{$json.client_id}}",
+              "operation": "equals",
+              "rightValue": "={{$json.webhook_client_id}}"
+            }
+          ],
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "60608194-b5bc-4f6e-99ea-c7dca1873c1a",
+      "name": "Apply Webhook Client Filter",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -7184,
+        -1136
+      ],
+      "executeOnce": false,
+      "notes": "Restricts Client mode to a requested webhook client_id when supplied."
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "8901fe1b-a846-49f0-8021-b059d75c855b",
+      "name": "Process Each Client",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -6184,
+        -1024
+      ],
+      "executeOnce": false,
+      "notes": "Processes one active client at a time."
+    },
+    {
+      "parameters": {
+        "jsCode": "function list(value) {\n  if (Array.isArray(value)) return value;\n  return String(value || '').split(',').map((v) => v.trim()).filter(Boolean);\n}\nreturn items.map((item) => {\n  try {\n    const config = item.json.config || {};\n    const clientId = String(item.json.client_id || '').trim();\n    const client = {\n      client_id: clientId,\n      client_name: item.json.client_name || '',\n      niche: item.json.niche || '',\n      brand_voice: item.json.brand_voice || '',\n      target_platforms: list(item.json.target_platforms),\n      tracked_accounts: list(item.json.tracked_accounts),\n      niche_keywords: list(item.json.niche_keywords),\n      target_subreddits: list(item.json.target_subreddits),\n      region: item.json.region || config.default_region || 'US',\n      min_trend_score: Number(item.json.min_trend_score || config.default_min_trend_score || 70),\n      max_ideas_per_trend: Number(item.json.max_ideas_per_trend || 3),\n      rag_enabled: String(item.json.rag_enabled ?? 'true').toLowerCase() === 'true',\n      qdrant_kb_namespace: item.json.qdrant_kb_namespace || `client_kb_${clientId}`,\n      report_email: String(item.json.report_email || 'false').toLowerCase() === 'true',\n      report_notion: String(item.json.report_notion || 'false').toLowerCase() === 'true',\n      report_slack: String(item.json.report_slack || 'false').toLowerCase() === 'true',\n      recipient_email: item.json.recipient_email || '',\n      notion_database_id: item.json.notion_database_id || '',\n      slack_webhook_url: item.json.slack_webhook_url || ''\n    };\n    return { json: { ...item.json, client } };\n  } catch (error) {\n    return { json: { ...item.json, _errors: [{ node_name: 'Build Client Context', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "9b4c19c8-c90d-444e-a361-05c18c01150e",
+      "name": "Build Client Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6624,
+        -1136
+      ],
+      "executeOnce": false,
+      "notes": "Normalizes each Clients row into a client context object."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.TREND_ANALYZER_GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Client00_Tracked_Accounts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "a2bfc78b-d254-4d57-8981-71f951217b7f",
+      "name": "Load Client00 Tracked Accounts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        -7744,
+        -896
+      ],
+      "executeOnce": false,
+      "notes": "Reads from the Client00_Tracked_Accounts tab using the configured Google Sheet."
+    },
+    {
+      "parameters": {
+        "jsCode": "function list(value, fallback = []) {\n  if (Array.isArray(value)) return value;\n  const parsed = String(value || '').split(',').map((v) => v.trim()).filter(Boolean);\n  return parsed.length ? parsed : fallback;\n}\ntry {\n  const first = items[0]?.json || {};\n  const config = first.config || {};\n  const tracked_accounts = items\n    .filter((item) => item.json.platform && item.json.handle)\n    .map((item) => ({ platform: item.json.platform, handle: item.json.handle, category: item.json.category || 'general' }));\n  return [{\n    json: {\n      ...first,\n      mode: 'client00',\n      client: {\n        client_id: 'client00',\n        client_name: 'Client00 Market Scan',\n        niche: 'cross-niche social market scan',\n        brand_voice: '',\n        target_platforms: ['instagram', 'tiktok', 'facebook', 'linkedin', 'youtube', 'reddit', 'google_trends'],\n        tracked_accounts,\n        niche_keywords: list(config.client00_keywords, ['viral', 'trending', 'popular']),\n        target_subreddits: list(config.client00_subreddits, ['popular', 'all', 'InternetIsBeautiful', 'OutOfTheLoop']),\n        region: config.client00_region || 'US',\n        min_trend_score: Number(config.default_min_trend_score || 70),\n        max_ideas_per_trend: 3,\n        rag_enabled: false,\n        qdrant_kb_namespace: '',\n        report_email: false,\n        report_notion: false,\n        report_slack: false,\n        recipient_email: '',\n        notion_database_id: '',\n        slack_webhook_url: ''\n      }\n    }\n  }];\n} catch (error) {\n  return [{ json: { mode: 'client00', client: { client_id: 'client00', rag_enabled: false }, _errors: [{ node_name: 'Build Client00 Context', error_message: error.message, payload_snippet: JSON.stringify(items).slice(0, 500) }] } }];\n}"
+      },
+      "id": "e48fc442-7621-449c-838e-a7ed9cd2664d",
+      "name": "Build Client00 Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7456,
+        -896
+      ],
+      "executeOnce": false,
+      "notes": "Creates the general market-scan context tagged client00 with RAG disabled."
+    },
+    {
+      "parameters": {},
+      "id": "2caae7bf-ebe1-402f-928b-22ba6987dba4",
+      "name": "Merge · Client Context Streams",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -6336,
+        -1024
+      ],
+      "executeOnce": false,
+      "notes": "Converges Client and Client00 contexts into one downstream stream."
+    },
+    {
+      "parameters": {
+        "content": "## Phase 3 · Data Collection\\nApify runs start async, share one 5-min wait, then datasets are fetched. YouTube/Reddit/Trends/BuzzSumo run alongside, then all sources normalize and dedupe.",
+        "height": 150,
+        "width": 720,
+        "color": 4
+      },
+      "id": "9f0b3784-8381-4b12-a411-2d53fd2008b1",
+      "name": "Phase 3 · Parallel Data Collection",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -6096,
+        -1328
+      ],
+      "executeOnce": false,
+      "notes": "Sticky note labeling Phase 3 · Parallel Data Collection."
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet"
+            },
+            {
+              "name": "order",
+              "value": "viewCount"
+            },
+            {
+              "name": "publishedAfter",
+              "value": "={{new Date(Date.now() - 86400000 * Number($json.lookback_days_override || $json.config.lookback_days || 14)).toISOString()}}"
+            },
+            {
+              "name": "q",
+              "value": "={{($json.client.niche_keywords || []).join(\" \")}}"
+            },
+            {
+              "name": "maxResults",
+              "value": "25"
+            },
+            {
+              "name": "type",
+              "value": "video"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "402a23cd-6563-4f57-8f97-c7d1d34daf40",
+      "name": "YouTube · Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -6032,
+        -544
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Searches YouTube by niche keywords using the official API."
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/youtube/v3/videos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "statistics,snippet"
+            },
+            {
+              "name": "id",
+              "value": "={{($json.items || []).map(i => i.id && i.id.videoId).filter(Boolean).join(\",\")}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3eb7bcb6-39d1-4951-b2e5-14faf0bc19f0",
+      "name": "YouTube · Enrich Videos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5760,
+        -544
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Enriches YouTube search results with statistics."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    return { json: { source: 'youtube_search', platform: 'youtube', raw: item.json, client: item.json.client, config: item.json.config, run_id: item.json.run_id, run_started_at: item.json.run_started_at } };\n  } catch (error) {\n    return { json: { source: 'youtube_search', platform: 'youtube', raw: item.json, _errors: [{ node_name: 'Map · youtube_search', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "fd82f0be-90db-4f88-a66b-628ce43d436f",
+      "name": "Map · YouTube Videos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5472,
+        -544
+      ],
+      "executeOnce": false,
+      "notes": "Labels YouTube enriched videos for normalization."
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "client.target_subreddits",
+        "options": {
+          "destinationFieldName": "subreddit"
+        }
+      },
+      "id": "0cd92e0a-31e1-49d6-a5ad-715a994cc6f4",
+      "name": "Reddit · Split Subreddits",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -6032,
+        -384
+      ],
+      "executeOnce": false,
+      "notes": "Splits target subreddits into individual API calls."
+    },
+    {
+      "parameters": {
+        "url": "=https://oauth.reddit.com/r/{{$json.subreddit}}/hot",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "25"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a239c543-2b78-4a78-8962-faeb2610870b",
+      "name": "Reddit · Hot Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5760,
+        -384
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Fetches hot posts from each target subreddit via Reddit OAuth2."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    return { json: { source: 'reddit_hot', platform: 'reddit', raw: item.json, client: item.json.client, config: item.json.config, run_id: item.json.run_id, run_started_at: item.json.run_started_at } };\n  } catch (error) {\n    return { json: { source: 'reddit_hot', platform: 'reddit', raw: item.json, _errors: [{ node_name: 'Map · reddit_hot', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "095ec41d-c672-45c9-9968-2c507c08b3a6",
+      "name": "Map · Reddit Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5472,
+        -384
+      ],
+      "executeOnce": false,
+      "notes": "Labels Reddit posts for normalization."
+    },
+    {
+      "parameters": {
+        "url": "=https://trends.google.com/trending/rss?geo={{$json.client.region || \"US\"}}",
+        "options": {}
+      },
+      "id": "056373b8-5c25-4bc0-920e-58c4ad32989f",
+      "name": "Google Trends · RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -6032,
+        -224
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Fetches Google Trends RSS for the client region."
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "1bffd517-2c38-4688-b5e3-1cbd759ba40a",
+      "name": "Google Trends · Parse XML",
+      "type": "n8n-nodes-base.xml",
+      "typeVersion": 1,
+      "position": [
+        -5760,
+        -224
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Parses Google Trends RSS XML into JSON."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    return { json: { source: 'google_trends_rss', platform: 'google_trends', raw: item.json, client: item.json.client, config: item.json.config, run_id: item.json.run_id, run_started_at: item.json.run_started_at } };\n  } catch (error) {\n    return { json: { source: 'google_trends_rss', platform: 'google_trends', raw: item.json, _errors: [{ node_name: 'Map · google_trends_rss', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "23055d7a-b5b5-4d92-9a7f-e52dae21bab0",
+      "name": "Map · Google Trends Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5472,
+        -224
+      ],
+      "executeOnce": false,
+      "notes": "Labels Google Trends items for normalization."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{String($json.config.buzzsumo_enabled || \"false\").toLowerCase()}}",
+              "operation": "equals",
+              "rightValue": "true"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a0394312-2cc3-4864-98a3-df5ef9f1851e",
+      "name": "BuzzSumo Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -6032,
+        -64
+      ],
+      "executeOnce": false,
+      "notes": "Gates optional BuzzSumo collection by config flag."
+    },
+    {
+      "parameters": {
+        "url": "https://api.buzzsumo.com/search/articles.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{($json.client.niche_keywords || []).join(\" \")}}"
+            },
+            {
+              "name": "num_results",
+              "value": "25"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f0ae43c7-c7b7-4c28-9b95-5bc1aebcd0ad",
+      "name": "BuzzSumo · Search Articles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5760,
+        -64
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Searches BuzzSumo articles when enabled."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    return { json: { source: 'buzzsumo_articles', platform: 'buzzsumo', raw: item.json, client: item.json.client, config: item.json.config, run_id: item.json.run_id, run_started_at: item.json.run_started_at } };\n  } catch (error) {\n    return { json: { source: 'buzzsumo_articles', platform: 'buzzsumo', raw: item.json, _errors: [{ node_name: 'Map · buzzsumo_articles', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "25ff8019-023b-4667-87de-7b0a8fa2865e",
+      "name": "Map · BuzzSumo Articles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5472,
+        -64
+      ],
+      "executeOnce": false,
+      "notes": "Labels BuzzSumo articles for normalization."
+    },
+    {
+      "parameters": {
+        "numberInputs": 5
+      },
+      "id": "08af865d-9e2e-44fa-84b6-e61af43cf3c8",
+      "name": "Merge · Source Posts",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -4624,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Appends normalized source branch outputs into one stream."
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nfunction arr(v) { if (Array.isArray(v)) return v.filter(Boolean); if (!v) return []; return [v]; }\nfunction pick(...vals) { for (const v of vals) if (v !== undefined && v !== null && v !== '') return v; return ''; }\nfunction num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }\n\nfunction buildPost(platform, raw, base) {\n  let likes = 0, comments = 0, shares = 0, views = 0;\n  let author_handle = '', author_id = '', post_id = '', post_url = '', text = '', posted_at = '';\n  let media_urls = [], hashtags = [];\n  switch (platform) {\n    case 'instagram':\n      likes = num(pick(raw.likesCount, raw.likes)); comments = num(pick(raw.commentsCount, raw.comments));\n      views = num(pick(raw.videoViewCount, raw.videoPlayCount, raw.views));\n      author_handle = pick(raw.ownerUsername, raw.username); author_id = pick(raw.ownerId);\n      post_id = pick(raw.id, raw.shortCode, raw.shortcode);\n      post_url = pick(raw.url, raw.shortCode ? 'https://www.instagram.com/p/' + raw.shortCode + '/' : '');\n      text = pick(raw.caption, raw.text); posted_at = pick(raw.timestamp, raw.taken_at);\n      media_urls = arr(raw.displayUrl || raw.videoUrl); hashtags = arr(raw.hashtags); break;\n    case 'tiktok': {\n      const st = raw.stats || {}; const am = raw.authorMeta || {};\n      likes = num(pick(raw.diggCount, st.diggCount)); comments = num(pick(raw.commentCount, st.commentCount));\n      shares = num(pick(raw.shareCount, st.shareCount)); views = num(pick(raw.playCount, st.playCount));\n      author_handle = pick(am.name, am.nickName, raw.author && raw.author.uniqueId); author_id = pick(am.id, raw.author && raw.author.id);\n      post_id = pick(raw.id, raw.awemeId); post_url = pick(raw.webVideoUrl, raw.url);\n      text = pick(raw.text, raw.desc);\n      posted_at = pick(raw.createTimeISO, raw.createTime ? new Date(raw.createTime * 1000).toISOString() : '');\n      media_urls = arr(raw.videoUrl || raw.videoMeta && raw.videoMeta.coverUrl);\n      hashtags = (raw.hashtags || []).map((h) => h && (h.name || h)).filter(Boolean); break;\n    }\n    case 'x': case 'twitter': {\n      const a = raw.author || raw.user || {};\n      likes = num(pick(raw.likeCount, raw.favoriteCount)); comments = num(raw.replyCount);\n      shares = num(pick(raw.retweetCount, raw.quoteCount)); views = num(pick(raw.viewCount, raw.views));\n      author_handle = pick(a.userName, a.username, a.screen_name); author_id = pick(a.id, a.id_str);\n      post_id = pick(raw.id, raw.id_str, raw.tweetId); post_url = pick(raw.url, raw.twitterUrl);\n      text = pick(raw.text, raw.fullText, raw.full_text); posted_at = pick(raw.createdAt, raw.created_at);\n      media_urls = (raw.media || []).map((m) => m && (m.media_url_https || m.url || m)).filter(Boolean);\n      hashtags = ((raw.entities && raw.entities.hashtags) || raw.hashtags || []).map((h) => h && (h.text || h.tag || h)).filter(Boolean); break;\n    }\n    case 'facebook':\n      likes = num(pick(raw.likes, raw.reactionsCount, raw.likesCount)); comments = num(pick(raw.comments, raw.commentsCount));\n      shares = num(pick(raw.shares, raw.sharesCount)); views = num(pick(raw.viewsCount, raw.videoViewCount));\n      author_handle = pick(raw.pageName, raw.user && raw.user.name, raw.author); author_id = pick(raw.pageId, raw.user && raw.user.id);\n      post_id = pick(raw.postId, raw.id); post_url = pick(raw.url, raw.postUrl, raw.permalink);\n      text = pick(raw.text, raw.message, raw.postText); posted_at = pick(raw.time, raw.date, raw.timestamp);\n      media_urls = arr(raw.imageUrl || (raw.media && raw.media.map((m) => m.url || m))); hashtags = arr(raw.hashtags); break;\n    case 'linkedin':\n      author_handle = pick(raw.username, raw.publicIdentifier, raw.profileId); author_id = pick(raw.id, raw.urn);\n      post_id = pick(raw.id, raw.username);\n      post_url = pick(raw.url, raw.profileUrl, raw.username ? 'https://www.linkedin.com/in/' + raw.username : '');\n      text = pick(raw.headline, raw.summary, raw.about);\n      media_urls = arr(raw.profilePicture); break;\n    case 'youtube': {\n      const sn = raw.snippet || {}; const stt = raw.statistics || {};\n      likes = num(stt.likeCount); comments = num(stt.commentCount); views = num(stt.viewCount);\n      author_handle = pick(sn.channelTitle); author_id = pick(sn.channelId);\n      const vid = pick(raw.id && raw.id.videoId, raw.id);\n      post_id = vid; post_url = vid ? 'https://www.youtube.com/watch?v=' + vid : '';\n      text = pick(sn.title, sn.description); posted_at = pick(sn.publishedAt);\n      media_urls = arr(sn.thumbnails && sn.thumbnails.high && sn.thumbnails.high.url); break;\n    }\n    case 'reddit':\n      likes = num(pick(raw.ups, raw.score, raw.upvotes)); comments = num(pick(raw.num_comments, raw.numberOfComments));\n      author_handle = pick(raw.author); author_id = pick(raw.author_fullname);\n      post_id = pick(raw.id, raw.name); post_url = pick(raw.url, raw.permalink ? 'https://www.reddit.com' + raw.permalink : '');\n      text = pick(raw.title, raw.selftext);\n      posted_at = raw.created_utc ? new Date(raw.created_utc * 1000).toISOString() : pick(raw.createdAt);\n      media_urls = arr(raw.url); break;\n    case 'google_trends':\n      views = num(pick(raw['ht:approx_traffic'], raw.traffic));\n      post_id = pick(raw.title, raw.link); post_url = pick(raw.link, raw.url);\n      text = pick(raw.title, raw.description); posted_at = pick(raw.pubDate); break;\n    case 'buzzsumo':\n      shares = num(pick(raw.total_shares, raw.totalShares));\n      author_handle = pick(raw.author_name); post_id = pick(raw.id, raw.url); post_url = pick(raw.url);\n      text = pick(raw.title); posted_at = pick(raw.published_date, raw.publishedDate); break;\n    default:\n      likes = num(pick(raw.likes, raw.likeCount)); comments = num(pick(raw.comments, raw.commentCount));\n      shares = num(pick(raw.shares, raw.shareCount)); views = num(pick(raw.views, raw.viewCount, raw.playCount));\n      author_handle = pick(raw.author, raw.username, raw.ownerUsername, raw.channelTitle);\n      post_id = pick(raw.id, raw.postId, raw.videoId, raw.url); post_url = pick(raw.url, raw.link, raw.permalink);\n      text = pick(raw.text, raw.caption, raw.title, raw.description); posted_at = pick(raw.published_at, raw.publishedAt, raw.timestamp);\n      media_urls = arr(raw.media_urls); hashtags = arr(raw.hashtags);\n  }\n  const metrics = { likes, comments, shares, views };\n  return {\n    platform, post_id: String(post_id || crypto.randomUUID()), post_url: String(post_url || ''),\n    author_handle: String(author_handle || ''), author_id: String(author_id || ''),\n    posted_at: String(posted_at || ''), text: String(text || ''),\n    media_urls, metrics, hashtags, engagement_total: likes + comments + shares + views,\n    scraped_at: new Date().toISOString(), source_actor: String(base.source_actor || base.source || ''),\n    _raw: raw,\n  };\n}\n\nconst out = [];\nfor (const item of items) {\n  try {\n    const base = item.json || {};\n    const platform = base.platform || (base.raw && base.raw.platform) || 'unknown';\n    const rawIn = base.raw || base;\n    let records = [rawIn];\n    if (platform === 'youtube' && Array.isArray(rawIn.items)) records = rawIn.items;\n    else if (platform === 'reddit' && rawIn.data && Array.isArray(rawIn.data.children)) records = rawIn.data.children.map((ch) => ch.data || ch);\n    else if (platform === 'google_trends') {\n      const it = (rawIn.rss && rawIn.rss.channel && rawIn.rss.channel.item) || (rawIn.channel && rawIn.channel.item) || rawIn.item;\n      if (Array.isArray(it)) records = it; else if (it) records = [it];\n    }\n    for (const raw of records) {\n      out.push({ json: { ...base, post: buildPost(platform, raw || {}, base), client: base.client, config: base.config } });\n    }\n  } catch (error) {\n    out.push({ json: { ...item.json, _errors: [{ node_name: 'Normalize Posts', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } });\n  }\n}\nreturn out;"
+      },
+      "id": "106cfdbf-900c-4c14-8bec-8471e249d7d2",
+      "name": "Normalize Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4336,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Maps all platform payloads into the unified post schema."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.TREND_ANALYZER_GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Trend History",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "8ed6f21d-be9b-4e9d-bcb1-e8aa07f39392",
+      "name": "Load Recent History",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        -4064,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Reads from the Trend History tab using the configured Google Sheet."
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const windowDays = Number(items[0]?.json?.config?.dedupe_window_days || 90);\n  const cutoff = Date.now() - windowDays * 86400000;\n  const seen = new Set();\n  for (const item of items) {\n    if (item.json.platform && item.json.post_id && item.json.captured_at) {\n      const ts = Date.parse(item.json.captured_at);\n      if (!Number.isNaN(ts) && ts >= cutoff) seen.add(String(item.json.platform) + '::' + String(item.json.post_id));\n    }\n  }\n  return items.filter((item) => {\n    const post = item.json.post;\n    if (!post) return false;\n    return !seen.has(String(post.platform) + '::' + String(post.post_id));\n  });\n} catch (error) {\n  return items.map((item) => ({ json: { ...item.json, _errors: [{ node_name: 'Dedupe Against History', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } }));\n}"
+      },
+      "id": "db5fdf02-7138-4714-8269-d765d7c17fd2",
+      "name": "Dedupe Against History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3776,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Drops posts already seen in Trend History within the dedupe window."
+    },
+    {
+      "parameters": {
+        "content": "## Phase 4 · RAG Grounding\nClient mode queries `client_kb_{client_id}`. Client00 mode sets an empty RAG context.",
+        "height": 140,
+        "width": 660,
+        "color": 4
+      },
+      "id": "07bb2707-da96-463e-a37c-2eca270d9556",
+      "name": "Phase 4 · RAG Grounding",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3504,
+        -928
+      ],
+      "executeOnce": false,
+      "notes": "Sticky note labeling Phase 4 · RAG Grounding."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{$json.client.rag_enabled}}",
+              "operation": "equals",
+              "rightValue": true
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "acaeb03c-e6c7-4f8a-8c97-008fa2f74046",
+      "name": "RAG Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3504,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Checks whether this context should query client RAG."
+    },
+    {
+      "parameters": {},
+      "id": "ba41d7c1-340b-4ff3-8a98-e2350aef6134",
+      "name": "OpenAI · Embed Seed Query",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        -3216,
+        -704
+      ],
+      "executeOnce": false,
+      "credentials": {},
+      "continueOnFail": true,
+      "notes": "Embeds the client niche and keywords for RAG retrieval."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.config.qdrant_url + \"/collections/\" + $json.client.qdrant_kb_namespace + \"/points/search\"}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "ae6d92bc-b637-4a2a-befa-f150101176e4",
+      "name": "Qdrant · Query Client KB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2944,
+        -704
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Searches the per-client Qdrant KB collection for grounding context."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    const result = item.json.result || item.json.points || [];\n    const chunks = Array.isArray(result) ? result : [];\n    const rag_context = chunks\n      .map((p) => p.payload?.text || p.payload?.content || p.payload?.chunk || '')\n      .filter(Boolean)\n      .join('\n---\n')\n      .slice(0, 6000);\n    return { json: { ...item.json, rag_context } };\n  } catch (error) {\n    return { json: { ...item.json, rag_context: '', _errors: [{ node_name: 'Format RAG Context', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "f3e491a4-74b1-4a5c-9e1b-d5f22be7462e",
+      "name": "Format RAG Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2656,
+        -704
+      ],
+      "executeOnce": false,
+      "notes": "Formats retrieved Qdrant chunks into a compact prompt context."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    return { json: { ...item.json, rag_context: '' } };\n  } catch (error) {\n    return { json: { ...item.json, rag_context: '', _errors: [{ node_name: 'Set Empty RAG Context', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "8fc68088-2027-45df-8e8d-1ac3e9ac0a0b",
+      "name": "Set Empty RAG Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3216,
+        -496
+      ],
+      "executeOnce": false,
+      "notes": "Sets an empty RAG context for Client00 and any non-RAG run."
+    },
+    {
+      "parameters": {},
+      "id": "f3be9997-b3f0-4950-bf43-3cea57fb1a5c",
+      "name": "Merge · RAG Context",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -2384,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Converges RAG and no-RAG branches for uniform prompts."
+    },
+    {
+      "parameters": {
+        "content": "## Phase 5 · AI Analysis\nThree sequential GPT-4o JSON calls: trend extraction, sentiment, and content idea generation.",
+        "height": 140,
+        "width": 660,
+        "color": 4
+      },
+      "id": "6d49d818-d08c-4539-9e89-f32c1bede577",
+      "name": "Phase 5 · AI Analysis",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2096,
+        -928
+      ],
+      "executeOnce": false,
+      "notes": "Sticky note labeling Phase 5 · AI Analysis."
+    },
+    {
+      "parameters": {},
+      "id": "c3ddde19-dc5e-42cb-883c-2f2cc71eff4b",
+      "name": "OpenAI · Trend Extractor",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        -2096,
+        -624
+      ],
+      "executeOnce": false,
+      "credentials": {},
+      "continueOnFail": true,
+      "notes": "Extracts candidate trends with strict JSON output."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    const content = item.json.message?.content || item.json.choices?.[0]?.message?.content || item.json.text || '{}';\n    const parsed = typeof content === 'string' ? JSON.parse(content) : content;\n    return { json: { ...item.json, trends: parsed.trends || [] } };\n  } catch (error) {\n    return { json: { ...item.json, trends: [], _errors: [{ node_name: 'Parse Trends JSON', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "57c467e1-7277-49a9-be18-10c2a32f807f",
+      "name": "Parse Trends JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1824,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Parses trend extractor JSON with try/catch."
+    },
+    {
+      "parameters": {},
+      "id": "9edcdc99-af4d-4589-b41d-4e58afb9b3ad",
+      "name": "OpenAI · Sentiment Analyzer",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        -1536,
+        -624
+      ],
+      "executeOnce": false,
+      "credentials": {},
+      "continueOnFail": true,
+      "notes": "Analyzes sentiment and dominant keywords with strict JSON output."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    const content = item.json.message?.content || item.json.choices?.[0]?.message?.content || item.json.text || '{}';\n    const parsed = typeof content === 'string' ? JSON.parse(content) : content;\n    return { json: { ...item.json, sentiment: parsed } };\n  } catch (error) {\n    return { json: { ...item.json, sentiment: { overall_sentiment: { positive_pct: 0, neutral_pct: 0, negative_pct: 0 }, per_post: [], dominant_keywords: [] }, _errors: [{ node_name: 'Parse Sentiment JSON', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "edbce200-25d6-44d8-b4a3-8161758f49d8",
+      "name": "Parse Sentiment JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1264,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Parses sentiment JSON with safe defaults on failure."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    const minScore = Number(item.json.client?.min_trend_score || item.json.config?.default_min_trend_score || 70);\n    const maxIdeas = Number(item.json.client?.max_ideas_per_trend || 3);\n    const eligible_trends = (item.json.trends || []).filter((trend) => Number(trend.score || 0) >= minScore);\n    return { json: { ...item.json, eligible_trends, max_ideas_per_trend: maxIdeas } };\n  } catch (error) {\n    return { json: { ...item.json, eligible_trends: [], _errors: [{ node_name: 'Prepare Idea Generation Input', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "afadaf65-249a-433e-b40d-e0f6e59f28e7",
+      "name": "Prepare Idea Generation Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -976,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Filters trends above the client minimum score before idea generation."
+    },
+    {
+      "parameters": {},
+      "id": "4c6a7b08-ddb1-434b-abf1-2774e2232970",
+      "name": "OpenAI · Idea Generator",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        -704,
+        -624
+      ],
+      "executeOnce": false,
+      "credentials": {},
+      "continueOnFail": true,
+      "notes": "Generates structured briefs and quick drafts for downstream content production."
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => {\n  try {\n    const content = item.json.message?.content || item.json.choices?.[0]?.message?.content || item.json.text || '{}';\n    const parsed = typeof content === 'string' ? JSON.parse(content) : content;\n    return { json: { ...item.json, ideas: (parsed.ideas || []).map((idea) => ({ delivery_mode: 'both', status: 'new', ...idea })) } };\n  } catch (error) {\n    return { json: { ...item.json, ideas: [], _errors: [{ node_name: 'Parse Ideas JSON', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "bfc76132-9cc8-479c-8da7-dcc5b3df7444",
+      "name": "Parse Ideas JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Parses idea generator JSON and defaults status/delivery mode."
+    },
+    {
+      "parameters": {
+        "content": "## Phase 6 · Dual-Write Storage\nWrite human-readable rows to Sheets and vectorized machine handoff records to Qdrant.",
+        "height": 140,
+        "width": 680,
+        "color": 4
+      },
+      "id": "c04dd413-fb70-4b17-afc8-856df185bf71",
+      "name": "Phase 6 · Dual Write Storage",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -144,
+        -928
+      ],
+      "executeOnce": false,
+      "notes": "Sticky note labeling Phase 6 · Dual Write Storage."
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nreturn items.map((item) => {\n  try {\n    const run_id = item.json.run_id;\n    const client_id = item.json.client?.client_id || 'unknown';\n    const now = new Date().toISOString();\n    const sentiment = item.json.sentiment?.overall_sentiment || {};\n    const dominant = item.json.sentiment?.dominant_keywords || [];\n    const trendRows = (item.json.trends || []).map((trend) => {\n      const trend_id = crypto.randomUUID();\n      return {\n        trend_id, client_id, run_id, captured_at: now,\n        name: trend.name, description: trend.description,\n        platforms_observed: JSON.stringify(trend.platforms_observed || []),\n        format_type: trend.format_type,\n        format_template_description: trend.format_template_description,\n        growth_signal: trend.growth_signal,\n        score: Number(trend.score || 0),\n        sentiment_positive_pct: sentiment.positive_pct || 0,\n        sentiment_neutral_pct: sentiment.neutral_pct || 0,\n        sentiment_negative_pct: sentiment.negative_pct || 0,\n        dominant_keywords: JSON.stringify(dominant),\n        supporting_post_urls: JSON.stringify(trend.supporting_post_urls || []),\n        qdrant_point_id: trend_id\n      };\n    });\n    const ideaRows = (item.json.ideas || []).map((idea) => {\n      const idea_id = crypto.randomUUID();\n      const trend = trendRows.find((t) => t.name === idea.trend_ref) || trendRows[0] || {};\n      return {\n        idea_id, trend_id: trend.trend_id || '', client_id, run_id, created_at: now,\n        platform: idea.platform, format: idea.format,\n        structured_brief: idea.structured_brief,\n        quick_draft_caption: idea.quick_draft?.caption || '',\n        quick_draft_hashtags: JSON.stringify(idea.quick_draft?.hashtags || []),\n        visual_brief: idea.visual_brief,\n        cta: idea.cta,\n        recommended_pipeline: idea.recommended_pipeline,\n        delivery_mode: idea.delivery_mode || 'both',\n        estimated_effort: idea.estimated_effort,\n        status: 'new',\n        qdrant_point_id: idea_id\n      };\n    });\n    const historyRows = $items().map((i) => i.json.post).filter(Boolean).map((post) => ({\n      history_id: crypto.randomUUID(), run_id, client_id, captured_at: now,\n      platform: post.platform, post_id: post.post_id, post_url: post.post_url,\n      engagement_total: post.engagement_total || 0, raw_score: post.engagement_total || 0\n    }));\n    const errorRows = (item.json._errors || []).map((err) => ({\n      error_id: crypto.randomUUID(), run_id, client_id, occurred_at: now,\n      node_name: err.node_name || 'Unknown Node', error_message: err.error_message || '', payload_snippet: err.payload_snippet || ''\n    }));\n    return { json: { ...item.json, trendRows, ideaRows, historyRows, errorRows } };\n  } catch (error) {\n    return { json: { ...item.json, trendRows: [], ideaRows: [], historyRows: [], errorRows: [{ error_id: crypto.randomUUID(), run_id: item.json.run_id, client_id: item.json.client?.client_id || 'unknown', occurred_at: new Date().toISOString(), node_name: 'Prepare Storage Records', error_message: error.message, payload_snippet: JSON.stringify(item.json).slice(0, 500) }] } };\n  }\n});"
+      },
+      "id": "2ed468fc-aabf-4907-b699-675bb9a0d78a",
+      "name": "Prepare Storage Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Builds snake_case Sheet rows and Qdrant payload batches."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.TREND_ANALYZER_GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Trends",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "19c25b1f-430f-477b-8751-e6b88ab0e1b2",
+      "name": "Sheets · Append Trends",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        144,
+        -816
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Appends to the Trends tab using the configured Google Sheet."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.TREND_ANALYZER_GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Ideas",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "134ea4c2-8d40-44c1-9df9-59e2e90f61ad",
+      "name": "Sheets · Append Ideas",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        144,
+        -704
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Appends to the Ideas tab using the configured Google Sheet."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.TREND_ANALYZER_GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Trend History",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "ef7107d2-653b-4e6b-b748-f2a3b4e459d0",
+      "name": "Sheets · Append Trend History",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        144,
+        -576
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Appends to the Trend History tab using the configured Google Sheet."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.TREND_ANALYZER_GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Run Errors",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "5ab72999-ea21-4b3b-88f8-65032f086d34",
+      "name": "Sheets · Append Run Errors",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        144,
+        -464
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Appends to the Run Errors tab using the configured Google Sheet."
+    },
+    {
+      "parameters": {},
+      "id": "132df00c-d875-45a6-826e-480aadcbef51",
+      "name": "OpenAI · Embed Trends",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        144,
+        -304
+      ],
+      "executeOnce": false,
+      "credentials": {},
+      "continueOnFail": true,
+      "notes": "Embeds trend text for Qdrant trends_signals."
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{$json.config.qdrant_url + \"/collections/trends_signals/points\"}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "37893935-a7dd-4d75-a031-f6601fca1bbe",
+      "name": "Qdrant · Upsert Trends",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        432,
+        -304
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Upserts trend vectors and metadata into Qdrant trends_signals."
+    },
+    {
+      "parameters": {},
+      "id": "dd865682-ec5d-41f8-9a70-0d62ae99ac29",
+      "name": "OpenAI · Embed Ideas",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        144,
+        -144
+      ],
+      "executeOnce": false,
+      "credentials": {},
+      "continueOnFail": true,
+      "notes": "Embeds idea briefs for Qdrant content_ideas."
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{$json.config.qdrant_url + \"/collections/content_ideas/points\"}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "96ab411e-3e27-4525-95bd-f4a2a2e43b8e",
+      "name": "Qdrant · Upsert Ideas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        432,
+        -144
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Upserts content idea vectors and status metadata into Qdrant content_ideas."
+    },
+    {
+      "parameters": {
+        "content": "## Phase 7 · Optional Report Routing\nDisabled by default. Client flags can send Email, Notion, or Slack digests after storage.",
+        "height": 140,
+        "width": 660,
+        "color": 4
+      },
+      "id": "e118f551-c5ce-404d-923a-45d25d9ee986",
+      "name": "Phase 7 · Optional Reporting",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        704,
+        -928
+      ],
+      "executeOnce": false,
+      "notes": "Sticky note labeling Phase 7 · Optional Reporting."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.client.report_email}}",
+                    "operation": "equals",
+                    "rightValue": true
+                  }
+                ],
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Email"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.client.report_notion}}",
+                    "operation": "equals",
+                    "rightValue": true
+                  }
+                ],
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Notion"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.client.report_slack}}",
+                    "operation": "equals",
+                    "rightValue": true
+                  }
+                ],
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Slack"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e4d98979-d745-42de-90b5-4e716cc402da",
+      "name": "Report Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        704,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Routes completed runs to optional report channels based on client flags."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{$json.client.report_email}}",
+              "operation": "equals",
+              "rightValue": true
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "e588282f-6521-45de-acda-96cc8493a1e1",
+      "name": "Email Report Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        992,
+        -784
+      ],
+      "executeOnce": false,
+      "notes": "Guards email reporting."
+    },
+    {
+      "parameters": {},
+      "id": "a9886c74-53bf-4a8c-994a-20d7157100f5",
+      "name": "OpenAI · Generate Email Report",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        1264,
+        -784
+      ],
+      "executeOnce": false,
+      "credentials": {},
+      "continueOnFail": true,
+      "notes": "Generates an HTML email report when enabled."
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.client.recipient_email}}",
+        "subject": "=Trend Analyzer Report · {{$json.client.client_name}} · {{$now.toISO()}}",
+        "message": "={{$json.message?.content || $json.html || \"Trend report attached in Sheets/Qdrant.\"}}",
+        "options": {}
+      },
+      "id": "c7dc1bf8-b00c-4abb-9af3-81824f7019ac",
+      "name": "Gmail · Send Trend Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1552,
+        -784
+      ],
+      "executeOnce": false,
+      "webhookId": "b85bed39-c697-492b-9e63-d7741a114d78",
+      "continueOnFail": true,
+      "notes": "Sends the optional email report via Gmail."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{$json.client.report_notion}}",
+              "operation": "equals",
+              "rightValue": true
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "dcf255fb-81bd-46e7-9b5b-bf746aedee38",
+      "name": "Notion Report Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        992,
+        -624
+      ],
+      "executeOnce": false,
+      "notes": "Guards Notion reporting."
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": "={{$json.client.notion_database_id}}",
+        "title": "=Trend Report · {{$json.client.client_name}} · {{$now.toISO()}}",
+        "propertiesUi": {
+          "propertyValues": []
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "textContent": "={{JSON.stringify({ trends: $json.trendRows || [], ideas: $json.ideaRows || [] })}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "42ad7fb4-b9cc-4cb5-aced-02ce9e7e38b2",
+      "name": "Notion · Create Trend Report Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1264,
+        -624
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Creates an optional Notion trend report page."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{$json.client.report_slack}}",
+              "operation": "equals",
+              "rightValue": true
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          }
+        },
+        "options": {}
+      },
+      "id": "c99629fe-def3-4a48-b04c-11a08069693b",
+      "name": "Slack Report Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        992,
+        -464
+      ],
+      "executeOnce": false,
+      "notes": "Guards Slack reporting."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.client.slack_webhook_url}}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "aca29747-4b02-4efb-ab22-7bdf5e1c57d8",
+      "name": "Slack · Send Trend Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1264,
+        -464
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Sends an optional Slack digest through the configured webhook URL."
+    },
+    {
+      "parameters": {
+        "content": "## Error Handling\nCode nodes collect structured `_errors`; external calls continue on fail. Workflow errors append to Run Errors.",
+        "height": 140,
+        "width": 700,
+        "color": 3
+      },
+      "id": "7ab9c86b-1ff4-4766-9881-1354576330a6",
+      "name": "Error Handling",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -4624,
+        368
+      ],
+      "executeOnce": false,
+      "notes": "Sticky note labeling Error Handling."
+    },
+    {
+      "parameters": {},
+      "id": "ef612137-f9ac-4aa0-995a-4c28d791cc52",
+      "name": "Workflow Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -4336,
+        592
+      ],
+      "executeOnce": false,
+      "notes": "Captures workflow-level errors."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{$env.TREND_ANALYZER_GOOGLE_SHEET_ID}}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Run Errors",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "67673002-8b80-49cc-849d-a4da2c8c0c42",
+      "name": "Sheets · Append Workflow Error",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        -4064,
+        592
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Appends to the Run Errors tab using the configured Google Sheet."
+    },
+    {
+      "parameters": {
+        "jsCode": "// One Apify run spec per platform / handle, using the verified default actors.\n// NOTE: YouTube + Reddit are intentionally absent here — they stay on the free official APIs.\nconst ctx = items[0]?.json || {};\nconst client = ctx.client || {};\nconst config = ctx.config || {};\nconst run_id = ctx.run_id;\nconst run_started_at = ctx.run_started_at;\nconst platforms = Array.isArray(client.target_platforms) ? client.target_platforms : [];\nconst keywords = (Array.isArray(client.niche_keywords) ? client.niche_keywords : []).map((k) => String(k).replace(/^#/, ''));\nconst tracked = (Array.isArray(client.tracked_accounts) ? client.tracked_accounts : [])\n  .map((t) => (typeof t === 'string' ? { platform: 'auto', handle: t } : t));\nconst limit = Number(config.apify_results_limit || 50);\nconst wantDeepDive = ctx.deep_dive === true || tracked.length > 0;\n// Verified default actors (May 2026). Apify API uses '~' between org and actor name.\n// Any matching config.apify_actor_* row overrides the default.\nconst ACTOR = {\n  instagram: config.apify_actor_instagram_hashtag || config.apify_actor_instagram || 'apify~instagram-scraper',\n  instagram_profile: config.apify_actor_instagram_profile || config.apify_actor_instagram || 'apify~instagram-scraper',\n  tiktok: config.apify_actor_tiktok || 'clockworks~tiktok-scraper',\n  twitter: config.apify_actor_twitter || 'apidojo~tweet-scraper',\n  facebook: config.apify_actor_facebook || 'apify~facebook-posts-scraper',\n  linkedin: config.apify_actor_linkedin || 'apimaestro~linkedin-profile-detail',\n};\nconst specs = [];\nfunction add(platform, source, actor_id, actor_input) {\n  if (!actor_id) return;\n  specs.push({ json: { platform, source, actor_id, actor_input, client, config, run_id, run_started_at } });\n}\nfunction handles(pf) {\n  return tracked.filter((t) => !t.platform || t.platform === 'auto' || t.platform === pf)\n    .map((t) => String(t.handle || '').replace(/^@/, '')).filter(Boolean);\n}\n\n// Instagram — apify/instagram-scraper (hashtags via tag URLs; profiles via profile URLs)\nif (platforms.includes('instagram')) {\n  const tagUrls = keywords.map((k) => 'https://www.instagram.com/explore/tags/' + encodeURIComponent(k) + '/');\n  if (tagUrls.length) add('instagram', 'instagram_hashtag', ACTOR.instagram,\n    { resultsType: 'posts', directUrls: tagUrls, resultsLimit: limit });\n  if (wantDeepDive) {\n    const users = handles('instagram');\n    if (users.length) add('instagram', 'instagram_profile', ACTOR.instagram_profile,\n      { resultsType: 'posts', directUrls: users.map((u) => 'https://www.instagram.com/' + u + '/'), resultsLimit: limit });\n  }\n}\n// TikTok — clockworks/tiktok-scraper (hashtags + search + profiles in one run)\nif (platforms.includes('tiktok')) {\n  add('tiktok', 'tiktok', ACTOR.tiktok,\n    { hashtags: keywords, searchQueries: keywords, profiles: handles('tiktok'), resultsPerPage: limit, searchSection: '/video' });\n}\n// Twitter / X — apidojo/tweet-scraper\nif (platforms.includes('x') || platforms.includes('twitter')) {\n  add('x', 'twitter', ACTOR.twitter,\n    { searchTerms: keywords, twitterHandles: handles('x').concat(handles('twitter')), sort: 'Latest', maxItems: limit });\n}\n// Facebook — apify/facebook-posts-scraper (needs page URLs from tracked handles)\nif (platforms.includes('facebook')) {\n  const fb = handles('facebook');\n  if (fb.length) add('facebook', 'facebook', ACTOR.facebook,\n    { startUrls: fb.map((h) => ({ url: /^https?:/i.test(h) ? h : 'https://www.facebook.com/' + h })), resultsLimit: limit });\n}\n// LinkedIn — apimaestro/linkedin-profile-detail (one profile per run, profile-level only)\nif (platforms.includes('linkedin')) {\n  for (const h of handles('linkedin')) {\n    add('linkedin', 'linkedin_profile', ACTOR.linkedin, { username: h, includeEmail: false });\n  }\n}\nreturn specs;"
+      },
+      "id": "a50fbc1f-0042-4e50-a8e9-9553f3068551",
+      "name": "Build Apify Run Specs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6032,
+        -1216
+      ],
+      "executeOnce": false,
+      "notes": "Emits one Apify run spec (actor_id + input) per enabled platform and tracked handle."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{'https://api.apify.com/v2/acts/' + encodeURIComponent($json.actor_id || '') + '/runs'}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.actor_input || {}) }}",
+        "options": {}
+      },
+      "id": "2537e223-0cd2-479a-a0df-a814369ee18e",
+      "name": "Apify · Start Runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5760,
+        -1216
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Starts each Apify actor run asynchronously; returns run id + defaultDatasetId without waiting."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{'https://api.apify.com/v2/datasets/' + ($json.dataset_id || '') + '/items'}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "clean",
+              "value": "true"
+            },
+            {
+              "name": "format",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ce8f4868-f52b-48e3-bf06-ddc5b2bbe7b2",
+      "name": "Apify · Fetch Dataset Items",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -4420,
+        -1120
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Fetches dataset items for each run after the wait, using the run defaultDatasetId."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Expand each fetched Apify dataset back into labelled posts.\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  let ctx;\n  try { ctx = $('Update Poll State').itemMatching(i).json; }\n  catch (e) { ctx = items[i].json || {}; }\n  const resp = items[i].json;\n  let arr;\n  if (Array.isArray(resp)) arr = resp;\n  else if (Array.isArray(resp.items)) arr = resp.items;\n  else if (Array.isArray(resp.data)) arr = resp.data;\n  else arr = resp && Object.keys(resp).length ? [resp] : [];\n  for (const raw of arr) {\n    out.push({ json: {\n      source: ctx.source || 'apify', platform: ctx.platform || 'unknown',\n      source_actor: ctx.actor_id || '', raw,\n      client: ctx.client, config: ctx.config,\n      run_id: ctx.run_id, run_started_at: ctx.run_started_at,\n    } });\n  }\n}\nreturn out;"
+      },
+      "id": "eeea2cdf-f574-4125-b6ae-468f365644e5",
+      "name": "Map · Apify Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4200,
+        -1120
+      ],
+      "executeOnce": false,
+      "notes": "Re-labels fetched Apify items with platform/source/client context for normalization."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Seed poll state from each started run, carrying platform/client context.\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  let spec;\n  try { spec = $('Build Apify Run Specs').itemMatching(i).json; }\n  catch (e) { spec = items[i].json || {}; }\n  const d = (items[i].json && items[i].json.data) ? items[i].json.data : {};\n  out.push({ json: {\n    apify_run_id: d.id || '',\n    dataset_id: d.defaultDatasetId || '',\n    status: d.status || 'READY',\n    attempt: 0,\n    platform: spec.platform || 'unknown',\n    source: spec.source || 'apify',\n    client: spec.client,\n    config: spec.config,\n    run_id: spec.run_id,\n    run_started_at: spec.run_started_at,\n  } });\n}\nreturn out;"
+      },
+      "id": "fb679777-8e63-49a0-906c-374fda87f4d7",
+      "name": "Init Poll State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5520,
+        -1216
+      ],
+      "executeOnce": false,
+      "notes": "Seeds poll state (run id, dataset id, status) for every started Apify run."
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ Number(($json.config && $json.config.apify_poll_interval_seconds) || 20) }}",
+        "unit": "seconds"
+      },
+      "id": "5dc6429a-c7b9-4b7d-b9f5-fa7eba157bf8",
+      "name": "Wait · Poll Interval",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -5300,
+        -1216
+      ],
+      "executeOnce": false,
+      "webhookId": "b2f261ee-3975-4314-972b-aa52ad5f6a38",
+      "notes": "Pauses one poll interval (default 20s, config.apify_poll_interval_seconds) before re-checking runs."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{'https://api.apify.com/v2/actor-runs/' + ($json.apify_run_id || '')}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "options": {}
+      },
+      "id": "c12ce039-f08c-4493-b4b6-e93678ef4b0e",
+      "name": "Apify · Check Run Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5080,
+        -1216
+      ],
+      "executeOnce": false,
+      "continueOnFail": true,
+      "notes": "Polls each run status via GET /v2/actor-runs/{runId}."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Refresh status for each run; keep looping until none are pending.\nconst TERMINAL = ['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'];\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  let prev;\n  try { prev = $('Wait · Poll Interval').itemMatching(i).json; }\n  catch (e) { prev = items[i].json || {}; }\n  const d = (items[i].json && items[i].json.data) ? items[i].json.data : {};\n  const status = d.status || prev.status || 'RUNNING';\n  const attempt = Number(prev.attempt || 0) + 1;\n  const maxAttempts = Number((prev.config && prev.config.apify_poll_max_attempts) || 15);\n  const terminal = TERMINAL.includes(status);\n  out.push({ json: {\n    ...prev,\n    status,\n    dataset_id: d.defaultDatasetId || prev.dataset_id || '',\n    attempt,\n    pending: !terminal && attempt < maxAttempts,\n  } });\n}\nconst anyPending = out.some((o) => o.json.pending);\nfor (const o of out) o.json.batch_pending = anyPending;\nreturn out;"
+      },
+      "id": "9245ed21-b03a-45d4-8936-67169b855491",
+      "name": "Update Poll State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4860,
+        -1216
+      ],
+      "executeOnce": false,
+      "notes": "Records latest status/attempt and sets batch_pending until all runs finish or hit the attempt cap."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.batch_pending}}",
+              "operation": "equals",
+              "rightValue": true
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e729f11e-b05e-48c5-9236-cb326e844b19",
+      "name": "Runs Pending?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -4640,
+        -1216
+      ],
+      "executeOnce": false,
+      "notes": "True -> wait and poll again; False -> all runs settled, fetch datasets."
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Merge · Trigger Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Merge · Trigger Inputs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Merge · Trigger Inputs",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge · Trigger Inputs": {
+      "main": [
+        [
+          {
+            "node": "Initialize Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Run": {
+      "main": [
+        [
+          {
+            "node": "Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Config": {
+      "main": [
+        [
+          {
+            "node": "Parse Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Config": {
+      "main": [
+        [
+          {
+            "node": "Mode Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mode Router": {
+      "main": [
+        [
+          {
+            "node": "Load Clients",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Client00 Tracked Accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Clients": {
+      "main": [
+        [
+          {
+            "node": "Filter Active Clients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Active Clients": {
+      "main": [
+        [
+          {
+            "node": "Apply Webhook Client Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Webhook Client Filter": {
+      "main": [
+        [
+          {
+            "node": "Build Client Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Client Context": {
+      "main": [
+        [
+          {
+            "node": "Merge · Client Context Streams",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Client00 Tracked Accounts": {
+      "main": [
+        [
+          {
+            "node": "Build Client00 Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Client00 Context": {
+      "main": [
+        [
+          {
+            "node": "Merge · Client Context Streams",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge · Client Context Streams": {
+      "main": [
+        [
+          {
+            "node": "Process Each Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Each Client": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Apify Run Specs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "YouTube · Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reddit · Split Subreddits",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Trends · RSS",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "BuzzSumo Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Apify Run Specs": {
+      "main": [
+        [
+          {
+            "node": "Apify · Start Runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify · Start Runs": {
+      "main": [
+        [
+          {
+            "node": "Init Poll State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Poll State": {
+      "main": [
+        [
+          {
+            "node": "Wait · Poll Interval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait · Poll Interval": {
+      "main": [
+        [
+          {
+            "node": "Apify · Check Run Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify · Check Run Status": {
+      "main": [
+        [
+          {
+            "node": "Update Poll State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Poll State": {
+      "main": [
+        [
+          {
+            "node": "Runs Pending?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runs Pending?": {
+      "main": [
+        [
+          {
+            "node": "Wait · Poll Interval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Apify · Fetch Dataset Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify · Fetch Dataset Items": {
+      "main": [
+        [
+          {
+            "node": "Map · Apify Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map · Apify Posts": {
+      "main": [
+        [
+          {
+            "node": "Merge · Source Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube · Search": {
+      "main": [
+        [
+          {
+            "node": "YouTube · Enrich Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube · Enrich Videos": {
+      "main": [
+        [
+          {
+            "node": "Map · YouTube Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map · YouTube Videos": {
+      "main": [
+        [
+          {
+            "node": "Merge · Source Posts",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Reddit · Split Subreddits": {
+      "main": [
+        [
+          {
+            "node": "Reddit · Hot Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reddit · Hot Posts": {
+      "main": [
+        [
+          {
+            "node": "Map · Reddit Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map · Reddit Posts": {
+      "main": [
+        [
+          {
+            "node": "Merge · Source Posts",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Google Trends · RSS": {
+      "main": [
+        [
+          {
+            "node": "Google Trends · Parse XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Trends · Parse XML": {
+      "main": [
+        [
+          {
+            "node": "Map · Google Trends Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map · Google Trends Items": {
+      "main": [
+        [
+          {
+            "node": "Merge · Source Posts",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "BuzzSumo Enabled?": {
+      "main": [
+        [
+          {
+            "node": "BuzzSumo · Search Articles",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "BuzzSumo · Search Articles": {
+      "main": [
+        [
+          {
+            "node": "Map · BuzzSumo Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map · BuzzSumo Articles": {
+      "main": [
+        [
+          {
+            "node": "Merge · Source Posts",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Merge · Source Posts": {
+      "main": [
+        [
+          {
+            "node": "Normalize Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Posts": {
+      "main": [
+        [
+          {
+            "node": "Load Recent History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Recent History": {
+      "main": [
+        [
+          {
+            "node": "Dedupe Against History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe Against History": {
+      "main": [
+        [
+          {
+            "node": "RAG Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RAG Enabled?": {
+      "main": [
+        [
+          {
+            "node": "OpenAI · Embed Seed Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Empty RAG Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI · Embed Seed Query": {
+      "main": [
+        [
+          {
+            "node": "Qdrant · Query Client KB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant · Query Client KB": {
+      "main": [
+        [
+          {
+            "node": "Format RAG Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format RAG Context": {
+      "main": [
+        [
+          {
+            "node": "Merge · RAG Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Empty RAG Context": {
+      "main": [
+        [
+          {
+            "node": "Merge · RAG Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge · RAG Context": {
+      "main": [
+        [
+          {
+            "node": "OpenAI · Trend Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI · Trend Extractor": {
+      "main": [
+        [
+          {
+            "node": "Parse Trends JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Trends JSON": {
+      "main": [
+        [
+          {
+            "node": "OpenAI · Sentiment Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI · Sentiment Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Parse Sentiment JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sentiment JSON": {
+      "main": [
+        [
+          {
+            "node": "Prepare Idea Generation Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Idea Generation Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI · Idea Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI · Idea Generator": {
+      "main": [
+        [
+          {
+            "node": "Parse Ideas JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ideas JSON": {
+      "main": [
+        [
+          {
+            "node": "Prepare Storage Records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Storage Records": {
+      "main": [
+        [
+          {
+            "node": "Sheets · Append Trends",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sheets · Append Ideas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sheets · Append Trend History",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sheets · Append Run Errors",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "OpenAI · Embed Trends",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "OpenAI · Embed Ideas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Process Each Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI · Embed Trends": {
+      "main": [
+        [
+          {
+            "node": "Qdrant · Upsert Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI · Embed Ideas": {
+      "main": [
+        [
+          {
+            "node": "Qdrant · Upsert Ideas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant · Upsert Trends": {
+      "main": [
+        [
+          {
+            "node": "Report Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant · Upsert Ideas": {
+      "main": [
+        [
+          {
+            "node": "Report Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report Router": {
+      "main": [
+        [
+          {
+            "node": "Email Report Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion Report Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack Report Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Report Enabled?": {
+      "main": [
+        [
+          {
+            "node": "OpenAI · Generate Email Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "OpenAI · Generate Email Report": {
+      "main": [
+        [
+          {
+            "node": "Gmail · Send Trend Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion Report Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Notion · Create Trend Report Page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Slack Report Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Slack · Send Trend Digest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Workflow Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Sheets · Append Workflow Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "910045f58c4c3d2c81e909df7b49d956783dc407481a397631f9c15e5b3d1cda"
+  }
+}

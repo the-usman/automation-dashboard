@@ -31,8 +31,11 @@ from app.src.models.growth_models import (
     Recommendation,
     RecommendRequest,
     RecommendResponse,
+    SessionCreatedResponse,
+    SessionCreateRequest,
 )
 from app.src.services.instagram_campaign_runner import launch_campaign, stop_campaign
+from app.src.services.instagram_session import build_session_from_sessionid
 from app.src.services.instagram_task_runner import launch_action_task, stop_action_task
 from app.src.services.mongodb import get_db
 from social_trend_analyzer.growth import run as run_growth
@@ -82,6 +85,40 @@ async def recommend(req: RecommendRequest) -> RecommendResponse:
         count=len(recs),
         recommendations=recs,
         errors=result.get("errors", []),
+    )
+
+
+@router.post("/sessions", response_model=SessionCreatedResponse, status_code=201)
+async def create_session(req: SessionCreateRequest) -> SessionCreatedResponse:
+    """
+    Create/refresh a stored Instagram session from a browser `sessionid` cookie.
+
+    Log in to instagram.com in a browser, copy the `sessionid` cookie value, and
+    POST it here. The backend validates it, resolves the username, and stores the
+    session on the credential document (`instagram_accounts`). Campaigns/tasks then
+    reuse this session instead of a password login — avoiding the checkpoint.
+
+    The `sessionid` is a full account credential; it is used only to build the
+    session and is never returned in the response.
+    """
+    try:
+        username, settings = await asyncio.to_thread(build_session_from_sessionid, req.sessionid)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"sessionid login failed: {exc}")
+
+    credential_id = req.credential_id or username
+    db = get_db()
+    await db.instagram_accounts.update_one(
+        {"credential_id": credential_id},
+        {"$set": {"credential_id": credential_id, "username": username, "session": settings}},
+        upsert=True,
+    )
+
+    return SessionCreatedResponse(
+        credential_id=credential_id,
+        username=username,
+        status="saved",
+        message="Session stored. Use this credential_id in POST /growth/campaigns or /growth/tasks.",
     )
 
 
@@ -171,16 +208,20 @@ async def cancel_task(task_id: str):
 @router.post("/campaigns", response_model=CampaignCreatedResponse, status_code=202)
 async def create_campaign(req: CampaignRequest) -> CampaignCreatedResponse:
     """
-    Start a growth campaign from a **product description** alone. Returns immediately
-    with a campaign_id; the work runs in the background:
-    discover competitors → harvest their post commenters → follow up to
-    `total_follows` users (respecting the per-action delay and daily cap).
+    Start a growth campaign. Returns immediately with a campaign_id; work runs in
+    the background. Two ways to find users (`candidate_source`):
 
-    Poll GET /growth/campaigns/{id} for progress, GET .../results for the full
-    outcome, and POST .../cancel to stop.
+    * `apify` (default): discover competitors → harvest their post commenters →
+      follow up to `total_follows` (needs `product_description`).
+    * `instagram_suggested`: follow the account's own Instagram "Suggested for you"
+      accounts, reloading until `total_follows` is reached (no description needed).
+
+    Both respect the per-action delay and daily cap. Poll GET /growth/campaigns/{id}
+    for progress, GET .../results for the full outcome, and POST .../cancel to stop.
     """
     campaign_id = str(uuid.uuid4())
     started_at = datetime.now(timezone.utc).isoformat()
+    initial_stage = "authenticating" if req.candidate_source == "instagram_suggested" else "discovering"
 
     db = get_db()
     await db.instagram_campaigns.insert_one({
@@ -188,7 +229,7 @@ async def create_campaign(req: CampaignRequest) -> CampaignCreatedResponse:
         "credential_id": req.credential_id,
         "product_description": req.product_description,
         "status": "running",
-        "stage": "discovering",
+        "stage": initial_stage,
         "total_target": req.total_follows,
         "competitors": [],
         "competitors_found": 0,

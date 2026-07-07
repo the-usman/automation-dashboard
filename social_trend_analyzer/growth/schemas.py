@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class InstagramCredential(BaseModel):
@@ -23,6 +23,10 @@ class InstagramCredential(BaseModel):
     password: str = ""
     totp_seed: str | None = None
     session: dict[str, Any] | None = None
+    # A browser `sessionid` cookie. When set, login uses instagrapi's
+    # login_by_sessionid (which runs the full login flow so private write
+    # actions like follow work) instead of a password login. Transient secret.
+    sessionid: str = ""
 
 
 class CandidateUser(BaseModel):
@@ -33,6 +37,12 @@ class CandidateUser(BaseModel):
     source: str = ""        # "competitor" | "search"
     source_ref: str = ""    # competitor url or the keywords used
     context: str = ""       # their comment text, or the post caption
+
+    # Scraped data often carries JSON null for optional text fields; coerce to "".
+    @field_validator("full_name", "source", "source_ref", "context", mode="before")
+    @classmethod
+    def _none_to_empty(cls, v: Any) -> Any:
+        return "" if v is None else v
 
 
 class UserRecommendation(BaseModel):
@@ -72,6 +82,11 @@ class CompetitorAccount(BaseModel):
     reason: str = Field(default="", description="one-line justification for the ranking")
     followers: int = Field(default=0, description="follower count if the scraper returned it")
     source_ref: str = Field(default="", description="the keywords/hashtags this surfaced under")
+
+    @field_validator("full_name", "reason", "source_ref", mode="before")
+    @classmethod
+    def _none_to_empty(cls, v: Any) -> Any:
+        return "" if v is None else v
 
 
 class CompetitorList(BaseModel):

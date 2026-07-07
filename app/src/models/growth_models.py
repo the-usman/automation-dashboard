@@ -34,6 +34,25 @@ class RecommendResponse(BaseModel):
     errors: list[dict] = Field(default_factory=list)
 
 
+# ── Session bootstrap from a browser sessionid cookie ─────────────────────────
+class SessionCreateRequest(BaseModel):
+    """Create/refresh a stored IG session from a logged-in browser's cookie.
+
+    Reusing the browser's trusted ``sessionid`` avoids the password-login
+    checkpoint (``ChallengeRequired``).
+    """
+
+    sessionid: str = Field(..., min_length=8, description="value of the `sessionid` cookie from a logged-in instagram.com browser session")
+    credential_id: str = Field("", description="credential_id to store under; defaults to the resolved IG username")
+
+
+class SessionCreatedResponse(BaseModel):
+    credential_id: str
+    username: str
+    status: str            # "saved"
+    message: str = ""
+
+
 # ── Follow / Unfollow background task ─────────────────────────────────────────
 class ActionTaskRequest(BaseModel):
     action: str = Field(..., pattern="^(follow|unfollow)$")
