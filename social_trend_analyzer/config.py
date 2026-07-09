@@ -109,6 +109,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # follow target is met, then stop and report partial.
     "growth_suggested_max_empty_reloads": 5,  # consecutive reloads with no new users before giving up
     "growth_suggested_max_reloads": 40,       # absolute hard cap on reload calls
+    # Follow PEOPLE only: check each candidate's profile right before following
+    # and skip business/brand pages (one cached user_info read per candidate).
+    "growth_skip_business_accounts": True,
+    # Bulk unfollow — cap on how much of the following list is fetched in one
+    # read (0 = all); huge lists paginate the private API hard.
+    "growth_following_fetch_max": 1000,
 }
 
 

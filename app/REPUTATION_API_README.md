@@ -4,6 +4,9 @@ Score the online reputation of one or more social accounts (Instagram / X / TikT
 The backend scrapes each provided profile via Apify, sends the posts to OpenAI, and
 returns an overall score, a per-platform score, and strong/weak points.
 
+**Scope:** reputation is judged on the posts of the **last 30 days** (configurable via
+`REPUTATION_LOOKBACK_DAYS`). Older posts are excluded even if the scraper returns them.
+
 This is a **single, stateless endpoint** — no auth, no database, no polling. You send
 usernames, you get JSON back.
 
@@ -203,7 +206,12 @@ curl -X POST http://localhost:8001/check-reputation \
 - **CORS** is enabled. In production set `CORS_ALLOW_ORIGINS` to your frontend origin(s),
   comma-separated (default is `*` for dev).
 - Required env for scoring to work: `OPENAI_API_KEY`, `APIFY_API_TOKEN`. Optional:
-  `REPUTATION_OPENAI_MODEL` (default `gpt-4o`), `REPUTATION_POSTS_PER_PLATFORM` (default `20`).
+  `REPUTATION_OPENAI_MODEL` (default `gpt-4o`), `REPUTATION_LOOKBACK_DAYS` (default `30`),
+  `REPUTATION_POSTS_PER_PLATFORM` (max posts per platform within the window, default `100`).
+- **Logs:** every check is written (DEBUG level, full trail: scrape runs, poll status, post
+  counts, scoring, final result, timings) to `logs/reputation/reputation.log` (rotating,
+  5 MB × 3 backups). Override the directory with `REPUTATION_LOG_DIR`. Each request's lines
+  share a `[check_id]` prefix for correlation.
 - The server currently also needs `MONGODB_URI` set to start (shared app lifespan), even
   though the reputation endpoint itself doesn't use the database.
 - Interactive API docs: `GET {BASE_URL}/docs`.

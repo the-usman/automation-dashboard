@@ -1,12 +1,21 @@
+from datetime import datetime, timedelta, timezone
+
 from reputation_analyzer.normalize import normalize
 
 
+def _iso_days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime(
+        "%Y-%m-%dT%H:%M:%S+00:00"
+    )
+
+
 def test_instagram_mapping():
+    ts = _iso_days_ago(1)
     raw = [
         {
             "caption": "hello world",
             "url": "https://instagram.com/p/abc",
-            "timestamp": "2026-01-02T00:00:00Z",
+            "timestamp": ts,
             "likesCount": 120,
             "commentsCount": 8,
         }
@@ -16,16 +25,51 @@ def test_instagram_mapping():
     p = posts[0]
     assert p.text == "hello world"
     assert p.post_url == "https://instagram.com/p/abc"
-    assert p.date == "2026-01-02T00:00:00Z"
+    assert p.date == ts
     assert p.likes == 120
     assert p.comments == 8
 
 
 def test_missing_fields_default():
-    posts = normalize("instagram", [{}])
+    posts = normalize("instagram", [{"url": "https://instagram.com/p/x"}])
     assert posts[0].text == ""
     assert posts[0].likes == 0
     assert posts[0].comments == 0
+
+
+def test_placeholder_rows_dropped():
+    # apidojo~tweet-scraper emits {"noResults": true} rows when it finds nothing;
+    # anything with neither text nor a post URL is junk, not a post.
+    assert normalize("x", [{"noResults": True}, {}]) == []
+
+
+def test_posts_older_than_window_dropped():
+    raw = [
+        {"caption": "old", "url": "https://instagram.com/p/old", "timestamp": _iso_days_ago(45)},
+        {"caption": "new", "url": "https://instagram.com/p/new", "timestamp": _iso_days_ago(5)},
+    ]
+    posts = normalize("instagram", raw)
+    assert [p.text for p in posts] == ["new"]
+
+
+def test_x_classic_date_format_filtered():
+    old = (datetime.now(timezone.utc) - timedelta(days=60)).strftime(
+        "%a %b %d %H:%M:%S +0000 %Y"
+    )
+    recent = (datetime.now(timezone.utc) - timedelta(days=2)).strftime(
+        "%a %b %d %H:%M:%S +0000 %Y"
+    )
+    raw = [
+        {"text": "old tweet", "url": "https://x.com/i/1", "createdAt": old},
+        {"text": "recent tweet", "url": "https://x.com/i/2", "createdAt": recent},
+    ]
+    posts = normalize("x", raw)
+    assert [p.text for p in posts] == ["recent tweet"]
+
+
+def test_unparseable_date_kept():
+    raw = [{"caption": "undated", "url": "https://instagram.com/p/u", "timestamp": "not-a-date"}]
+    assert len(normalize("instagram", raw)) == 1
 
 
 def test_x_mapping():

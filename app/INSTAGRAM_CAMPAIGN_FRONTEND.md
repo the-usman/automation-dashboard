@@ -52,6 +52,73 @@
   | 2 | `GET /growth/campaigns/{id}` | Progress (stage + how many followed) | `200` status + counters |
   | 3 | `GET /growth/campaigns/{id}/results` | Full results (competitors + followed users) | `200` |
   | 4 | `POST /growth/campaigns/{id}/cancel` | Stop a running campaign | `200` acknowledgement |
+  | 5 | `GET /growth/campaigns/{id}/candidates` | Candidates found so far (live, streamed) | `200` list with `flagged` |
+  | 6 | `POST /growth/flags` | Flag a user as **do not follow** | `201` |
+  | 7 | `GET /growth/flags` | List all do-not-follow flags | `200` |
+  | 8 | `DELETE /growth/flags/{username}` | Unflag a user | `200` (`404` if not flagged) |
+
+  ---
+
+  ## Live competitors & candidates — `GET /growth/campaigns/{id}/candidates`
+
+  Both lists are written to the DB **the moment they are known** — you do
+  **not** have to wait for the campaign to finish. Poll this endpoint (e.g.
+  every 3–5 s during `discovering`/`harvesting`) to render them live:
+
+  * **Competitors** appear as soon as they are known: manually supplied ones
+    (`reason: "added manually"`, `score: 100`) are visible from the very first
+    poll; Apify-discovered ones land right after the `discovering` stage.
+  * **Candidates** are streamed per competitor in `apify` mode and per
+    suggestion reload in `instagram_suggested` mode.
+
+  ```json
+  {
+    "campaign_id": "…",
+    "status": "running",
+    "stage": "harvesting",
+    "competitors_found": 2,
+    "competitors": [
+      { "username": "gymshark", "score": 100, "reason": "added manually", "followers": 0 },
+      { "username": "niketraining", "score": 87, "reason": "high hashtag overlap", "followers": 154000 }
+    ],
+    "candidates_found": 23,
+    "candidates": [
+      { "username": "fituser1", "source": "commenters:@gymshark", "discovered_at": "2026-07-08T11:40:00+00:00", "flagged": false },
+      { "username": "spammer99", "source": "instagram_suggested", "discovered_at": "2026-07-08T11:41:12+00:00", "flagged": true }
+    ]
+  }
+  ```
+
+  ## Do-not-follow flags
+
+  Flag any user the account owner doesn't want to follow. The campaign checks
+  the flag list **right before each follow**, so flagging while a campaign is
+  running takes effect immediately — the user shows up in results as
+  `skipped` / `"flagged: do not follow"` and Instagram is never touched.
+
+  ## People only — brands/pages are never followed
+
+  Campaigns follow **people, not brands**. Right before each follow the backend
+  checks the candidate's profile and skips Instagram **business/brand pages**
+  automatically (no flag needed). Skipped pages appear in results as
+  `skipped` / `"brand/business account — people only"`. Human creator and
+  personal accounts are followed normally. (Server-side toggle:
+  `growth_skip_business_accounts`, on by default.)
+
+  ```ts
+  // Flag (username may include a leading @; it is normalized server-side)
+  await fetch(`${BASE}/growth/flags`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "spammer99", reason: "looks like a bot" }),
+  }); // 201 { username, flagged: true, reason }
+
+  // Unflag
+  await fetch(`${BASE}/growth/flags/spammer99`, { method: "DELETE" }); // 200
+
+  // List all flags
+  await fetch(`${BASE}/growth/flags`); // { count, flags: [{ username, reason, flagged_at }] }
+  ```
 
   ---
 
@@ -76,13 +143,14 @@
     "days": 2,                     // 1–30, intended spread (multi-day pacing = later milestone)
     "sources": ["commenters"],     // candidate sources; "commenters" supported today
     "n_posts": 5,                  // 1–20, recent posts per competitor to scan
-    "competitor_limit": 10         // optional, max competitors (default from server config)
+    "competitor_limit": 10,        // optional, max competitors (default from server config)
+    "competitors": ["@gymshark"]   // optional, manually chosen competitor usernames
   }
   ```
 
   | Field | Type | Required | Default | Notes |
   |-------|------|----------|---------|-------|
-  | `product_description` | string | yes | — | min length 3 |
+  | `product_description` | string | yes** | — | min length 3 |
   | `sessionid` | string | yes* | `""` | IG `sessionid` cookie; *required unless `credential_id` is given |
   | `credential_id` | string | yes* | `""` | alternative to `sessionid`: id of a stored IG account |
   | `total_follows` | int | no | `50` | 1–500 |
@@ -90,8 +158,15 @@
   | `sources` | string[] | no | `["commenters"]` | currently only `commenters` |
   | `n_posts` | int | no | `5` | 1–20 |
   | `competitor_limit` | int \| null | no | `null` | 1–50 |
+  | `competitors` | string[] | no | `[]` | manually chosen competitor usernames (max 50); `@` and case are normalized server-side; harvested **first**, before discovered competitors |
 
   \* Provide **either** `sessionid` **or** `credential_id`. Omitting both → `422`.
+
+  \** Required **unless** `competitors` is non-empty. With a manual `competitors`
+  list and a blank description, competitor discovery is skipped entirely and only
+  the manual accounts are harvested. If both are given, manual competitors come
+  first and discovery adds more (duplicates removed). If discovery fails but
+  manual competitors exist, the campaign continues with just the manual ones.
 
   **How the frontend gets the `sessionid`:** the user logs into instagram.com in their
   browser, opens DevTools → Application → Cookies → `https://www.instagram.com`, and
@@ -109,7 +184,7 @@
 
   ```ts
   async function startCampaign(body: {
-    product_description: string;
+    product_description?: string; // required unless `competitors` is non-empty
     sessionid: string;          // IG sessionid cookie (or use credential_id instead)
     credential_id?: string;
     total_follows?: number;
@@ -117,6 +192,7 @@
     sources?: string[];
     n_posts?: number;
     competitor_limit?: number;
+    competitors?: string[];     // manual competitor usernames, e.g. ["@gymshark"]
   }) {
     const res = await fetch(`${API_BASE}/growth/campaigns`, {
       method: "POST",

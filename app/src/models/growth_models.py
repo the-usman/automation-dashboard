@@ -5,7 +5,7 @@ response schemas, response models never leak secrets (passwords/sessions).
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ── Recommendation (synchronous) ──────────────────────────────────────────────
@@ -89,3 +89,51 @@ class ActionTaskStatusResponse(BaseModel):
     started_at: str
     completed_at: str | None = None
     error: str | None = None
+
+
+# ── Unfollow everyone except a keep-list (background task) ────────────────────
+class UnfollowAllRequest(BaseModel):
+    """Unfollow **everyone** the account currently follows, except ``keep``.
+
+    Authenticate with EITHER a browser ``sessionid`` cookie OR a stored
+    ``credential_id`` (same as campaigns). The following list is fetched once,
+    the ``keep`` usernames (and the account itself) are removed, and the rest
+    are unfollowed in the background with the usual pacing and daily cap.
+    """
+
+    sessionid: str = Field("", description="Instagram `sessionid` cookie from a logged-in browser")
+    credential_id: str = Field("", description="alternative to sessionid: a stored MongoDB credential_id")
+    keep: list[str] = Field(
+        default_factory=list,
+        max_length=1000,
+        description="usernames to KEEP following (with or without @); everyone else is unfollowed",
+    )
+    max_unfollows: int = Field(
+        0, ge=0, le=500,
+        description="stop after this many unfollows (0 = no explicit cap; the daily action cap still applies)",
+    )
+
+    @field_validator("keep")
+    @classmethod
+    def _norm_keep(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        cleaned: list[str] = []
+        for raw in v:
+            handle = (raw or "").strip().lstrip("@").lower()
+            if handle and handle not in seen:
+                seen.add(handle)
+                cleaned.append(handle)
+        return cleaned
+
+    @model_validator(mode="after")
+    def _require_auth(self) -> "UnfollowAllRequest":
+        if not self.sessionid and not self.credential_id:
+            raise ValueError("provide either 'sessionid' or 'credential_id'")
+        return self
+
+
+class UnfollowAllCreatedResponse(BaseModel):
+    task_id: str
+    status: str            # "running"
+    action: str            # "unfollow_all"
+    keep_count: int

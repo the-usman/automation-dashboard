@@ -19,6 +19,9 @@ class CampaignRequest(BaseModel):
 
     * ``"apify"`` (default) — derive keywords from ``product_description``, discover
       competitors and harvest their post commenters via Apify (no account reads).
+      Optionally pass ``competitors`` — manually chosen usernames harvested first;
+      with a manual list the description becomes optional (discovery is skipped
+      when it is blank).
     * ``"instagram_suggested"`` — follow the logged-in account's own Instagram
       "Suggested for you" accounts, reloading the suggestion list until
       ``total_follows`` is reached (no description / Apify needed).
@@ -45,6 +48,12 @@ class CampaignRequest(BaseModel):
     )
     n_posts: int = Field(5, ge=1, le=20, description="apify mode: recent posts per competitor to scan for commenters")
     competitor_limit: int | None = Field(None, ge=1, le=50, description="apify mode: max competitors to use (default from config)")
+    competitors: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+        description="apify mode: manually chosen competitor usernames (with or without @); "
+        "harvested first, ahead of any discovered competitors",
+    )
 
     @field_validator("candidate_source", mode="before")
     @classmethod
@@ -54,13 +63,33 @@ class CampaignRequest(BaseModel):
             raise ValueError(f"candidate_source must be one of {CANDIDATE_SOURCES}")
         return v
 
+    @field_validator("competitors")
+    @classmethod
+    def _norm_competitors(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        cleaned: list[str] = []
+        for raw in v:
+            handle = _normalize_handle(raw)
+            if handle and handle not in seen:
+                seen.add(handle)
+                cleaned.append(handle)
+        return cleaned
+
     @model_validator(mode="after")
     def _require_auth(self) -> "CampaignRequest":
         if not self.sessionid and not self.credential_id:
             raise ValueError("provide either 'sessionid' or 'credential_id'")
-        # A description is only needed to discover competitors (apify mode).
-        if self.candidate_source == "apify" and len(self.product_description.strip()) < 3:
-            raise ValueError("product_description (min 3 chars) is required for candidate_source='apify'")
+        # apify mode needs something to harvest from: a description to discover
+        # competitors, and/or a manual competitor list.
+        if (
+            self.candidate_source == "apify"
+            and len(self.product_description.strip()) < 3
+            and not self.competitors
+        ):
+            raise ValueError(
+                "candidate_source='apify' needs product_description (min 3 chars) "
+                "and/or a 'competitors' username list"
+            )
         return self
 
 
@@ -118,3 +147,61 @@ class CampaignResultsResponse(BaseModel):
     failed: int
     started_at: str
     completed_at: str | None = None
+
+
+def _normalize_handle(value: str) -> str:
+    return (value or "").strip().lstrip("@").lower()
+
+
+class CandidateModel(BaseModel):
+    """One discovered follow candidate, streamed to Mongo as soon as it is found."""
+
+    username: str
+    source: str = ""        # e.g. "commenters:@competitor" | "instagram_suggested"
+    discovered_at: str = ""
+    flagged: bool = False   # true if on the do-not-follow list (merged at read time)
+
+
+class CampaignCandidatesResponse(BaseModel):
+    """Candidates (and the competitors they came from) found so far — polled by
+    the frontend while the campaign runs."""
+
+    campaign_id: str
+    status: str
+    stage: str
+    competitors_found: int = 0
+    competitors: list[CompetitorModel] = Field(default_factory=list)
+    candidates_found: int
+    candidates: list[CandidateModel]
+
+
+class FlagRequest(BaseModel):
+    """Flag an Instagram user as 'do not follow' (with or without a leading @)."""
+
+    username: str = Field(..., min_length=1, description="Instagram username to never follow")
+    reason: str = Field("", description="optional note about why the user is flagged")
+
+    @field_validator("username")
+    @classmethod
+    def _norm_username(cls, v: str) -> str:
+        v = _normalize_handle(v)
+        if not v:
+            raise ValueError("username must not be blank")
+        return v
+
+
+class FlagModel(BaseModel):
+    username: str
+    reason: str = ""
+    flagged_at: str = ""
+
+
+class FlagResponse(BaseModel):
+    username: str
+    flagged: bool
+    reason: str = ""
+
+
+class FlagListResponse(BaseModel):
+    count: int
+    flags: list[FlagModel]

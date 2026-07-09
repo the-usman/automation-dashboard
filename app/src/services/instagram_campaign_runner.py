@@ -84,29 +84,69 @@ def stop_campaign(campaign_id: str) -> bool:
     return True
 
 
-def _harvest_candidates_via_apify(
-    competitors: list[dict], req: CampaignRequest, config: dict
-) -> list[str]:
-    """Deduped commenters of each competitor's recent posts, scraped via Apify.
+async def _push_candidates(db, campaign_id: str, usernames: list[str], source: str) -> None:
+    """Persist newly discovered candidates immediately, so the frontend can show
+    them (GET /growth/campaigns/{id}/candidates) while the campaign is running."""
+    if not usernames:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    docs = [{"username": u, "source": source, "discovered_at": now} for u in usernames]
+    await db.instagram_campaigns.update_one(
+        {"campaign_id": campaign_id},
+        {"$push": {"candidates": {"$each": docs}}, "$inc": {"candidates_found": len(docs)}},
+    )
 
-    Apify reads public data with its own accounts/proxies, so this never touches
-    — or logs out — the user's Instagram account.
-    """
-    seen: set[str] = set()
-    out: list[str] = []
-    comp_handles = {c["username"] for c in competitors}
-    for comp in competitors:
-        if len(out) >= req.total_follows:
-            break
-        for cand in competitor_commenters(comp["username"], req.n_posts, config):
-            handle = cand.username
-            if not handle or handle in seen or handle in comp_handles:
-                continue
-            seen.add(handle)
-            out.append(handle)
-            if len(out) >= req.total_follows:
-                break
-    return out
+
+async def _is_flagged(db, username: str) -> bool:
+    """True if the user is on the do-not-follow list. Checked live before every
+    follow, so a flag set from the frontend mid-campaign takes effect immediately."""
+    handle = (username or "").strip().lstrip("@").lower()
+    return await db.instagram_do_not_follow.find_one({"username": handle}) is not None
+
+
+async def _persist_result_row(db, campaign_id: str, row: dict) -> None:
+    await db.instagram_campaigns.update_one(
+        {"campaign_id": campaign_id},
+        {
+            "$push": {"results": row},
+            "$inc": {
+                "done": 1,
+                "current_index": 1,
+                "success": 1 if row["status"] == "success" else 0,
+                "skipped": 1 if row["status"] == "skipped" else 0,
+                "failed": 1 if row["status"] == "error" else 0,
+            },
+        },
+    )
+
+
+async def _record_flagged_skip(db, campaign_id: str, username: str, idx: int, total: int) -> dict:
+    """Record a skip for a do-not-follow user without touching Instagram."""
+    row = {"username": username, "action": "follow", "status": "skipped",
+           "user_id": "", "message": "flagged: do not follow"}
+    logger.info("Campaign %s: [%d/%d] @%s is flagged do-not-follow — skipping", campaign_id, idx, total, username)
+    _activity_log(campaign_id, f"SKIP [{idx}/{total}] @{username} — flagged: do not follow")
+    await _persist_result_row(db, campaign_id, row)
+    return row
+
+
+async def _is_brand(client, config: dict, username: str) -> bool:
+    """True if the candidate is a business/brand page and the campaign should
+    follow people only. Unknown profiles (read failed) are treated as people —
+    a transient error must not silently drain the campaign."""
+    if not config.get("growth_skip_business_accounts", True):
+        return False
+    return bool(await asyncio.to_thread(client.is_business_account, username))
+
+
+async def _record_brand_skip(db, campaign_id: str, username: str, idx: int, total: int) -> dict:
+    """Record a skip for a business/brand page — campaigns follow people only."""
+    row = {"username": username, "action": "follow", "status": "skipped",
+           "user_id": "", "message": "brand/business account — people only"}
+    logger.info("Campaign %s: [%d/%d] @%s is a brand/business page — skipping", campaign_id, idx, total, username)
+    _activity_log(campaign_id, f"SKIP [{idx}/{total}] @{username} — brand/business account")
+    await _persist_result_row(db, campaign_id, row)
+    return row
 
 
 async def _record_follow(db, campaign_id: str, client, username: str, idx: int, total: int) -> dict:
@@ -134,19 +174,7 @@ async def _record_follow(db, campaign_id: str, client, username: str, idx: int, 
         f"FOLLOW [{idx}/{total}] @{username} -> {row['status']}"
         + (f" ({row['message']})" if row.get("message") else ""),
     )
-    await db.instagram_campaigns.update_one(
-        {"campaign_id": campaign_id},
-        {
-            "$push": {"results": row},
-            "$inc": {
-                "done": 1,
-                "current_index": 1,
-                "success": 1 if row["status"] == "success" else 0,
-                "skipped": 1 if row["status"] == "skipped" else 0,
-                "failed": 1 if row["status"] == "error" else 0,
-            },
-        },
-    )
+    await _persist_result_row(db, campaign_id, row)
     return row
 
 
@@ -234,56 +262,113 @@ async def _run_campaign(campaign_id: str, req: CampaignRequest, stop_event: asyn
 
 
 async def _run_apify(campaign_id, req, stop_event, db, config, _set, _finish, _authenticate, _cleanup_session) -> None:
-    # 1. Discover competitors via Apify (public scrape — no account touched)
-    try:
-        await _set(stage="discovering")
-        top_n = int(req.competitor_limit or config.get("growth_competitor_limit", 10))
-        competitor_list = await asyncio.to_thread(
-            discover_competitors, req.product_description, config, top_n
+    # 1. Competitors. Manually supplied usernames are persisted right away (the
+    #    frontend can render them before discovery even starts) and are harvested
+    #    first. Apify discovery then adds more — unless the description is blank
+    #    (manual-only campaign) — and a discovery failure with manual competitors
+    #    on hand degrades to manual-only instead of failing the campaign.
+    competitors = [
+        {"username": u, "score": 100, "reason": "added manually", "followers": 0}
+        for u in req.competitors
+    ]
+    if competitors:
+        await _set(competitors=competitors, competitors_found=len(competitors))
+        logger.info(
+            "Campaign %s: [discovering] %d manual competitors: %s",
+            campaign_id, len(competitors), ", ".join(c["username"] for c in competitors[:10]),
         )
-        competitors = [c.model_dump() for c in competitor_list.competitors]
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Campaign %s: competitor discovery failed", campaign_id)
-        await _finish("failed", stage="discovering", error=f"discovery failed: {exc}")
-        return
+        _activity_log(
+            campaign_id,
+            f"MANUAL {len(competitors)} competitors: "
+            + ", ".join("@" + c["username"] for c in competitors),
+        )
 
-    await _set(competitors=competitors, competitors_found=len(competitors))
-    logger.info(
-        "Campaign %s: [discovering] found %d competitors: %s",
-        campaign_id, len(competitors), ", ".join(c["username"] for c in competitors[:10]) or "(none)",
-    )
-    _activity_log(
-        campaign_id,
-        f"APIFY discovered {len(competitors)} competitors: "
-        + (", ".join("@" + c["username"] for c in competitors) or "(none)"),
-    )
+    if req.product_description.strip():
+        try:
+            await _set(stage="discovering")
+            top_n = int(req.competitor_limit or config.get("growth_competitor_limit", 10))
+            competitor_list = await asyncio.to_thread(
+                discover_competitors, req.product_description, config, top_n
+            )
+            known = {c["username"].lower() for c in competitors}
+            discovered = [
+                c.model_dump() for c in competitor_list.competitors
+                if c.username.lower() not in known
+            ]
+            competitors = competitors + discovered
+            await _set(competitors=competitors, competitors_found=len(competitors))
+            logger.info(
+                "Campaign %s: [discovering] found %d competitors (%d discovered): %s",
+                campaign_id, len(competitors), len(discovered),
+                ", ".join(c["username"] for c in competitors[:10]) or "(none)",
+            )
+            _activity_log(
+                campaign_id,
+                f"APIFY discovered {len(discovered)} competitors: "
+                + (", ".join("@" + c["username"] for c in discovered) or "(none)"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Campaign %s: competitor discovery failed", campaign_id)
+            if not competitors:
+                await _finish("failed", stage="discovering", error=f"discovery failed: {exc}")
+                return
+            _activity_log(
+                campaign_id,
+                f"APIFY discovery failed ({exc}) — continuing with "
+                f"{len(competitors)} manual competitor(s)",
+            )
+
     if not competitors:
         await _finish("completed", stage="done",
                       error="no competitors found — set TREND_APIFY_TOKEN and try a more "
-                            "specific, hashtag-friendly description")
+                            "specific, hashtag-friendly description (or pass 'competitors' manually)")
         return
 
-    # 2. Harvest candidate users (commenters) via Apify (still no account touched)
+    # 2. Harvest candidate users (commenters) via Apify (still no account touched).
+    #    Candidates are pushed to Mongo per competitor, as soon as they are found,
+    #    so the frontend can render them while harvesting is still in progress.
     try:
         await _set(stage="harvesting")
-        usernames = await asyncio.to_thread(
-            _harvest_candidates_via_apify, competitors, req, config
-        )
+        seen: set[str] = set()
+        usernames: list[str] = []
+        comp_handles = {c["username"] for c in competitors}
+        for comp in competitors:
+            if len(usernames) >= req.total_follows or stop_event.is_set():
+                break
+            cands = await asyncio.to_thread(
+                competitor_commenters, comp["username"], req.n_posts, config
+            )
+            fresh: list[str] = []
+            for cand in cands:
+                handle = cand.username
+                if not handle or handle in seen or handle in comp_handles:
+                    continue
+                seen.add(handle)
+                fresh.append(handle)
+                usernames.append(handle)
+                if len(usernames) >= req.total_follows:
+                    break
+            await _push_candidates(db, campaign_id, fresh, source=f"commenters:@{comp['username']}")
+            if fresh:
+                logger.info(
+                    "Campaign %s: [harvesting] +%d candidates from @%s (total %d)",
+                    campaign_id, len(fresh), comp["username"], len(usernames),
+                )
+                _activity_log(
+                    campaign_id,
+                    f"APIFY +{len(fresh)} candidates from @{comp['username']}: "
+                    + ", ".join("@" + u for u in fresh),
+                )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Campaign %s: harvesting failed", campaign_id)
         await _finish("failed", stage="harvesting", error=f"harvesting failed: {exc}")
         return
 
-    await _set(candidates_found=len(usernames))
     logger.info(
         "Campaign %s: [harvesting] harvested %d candidate commenters via Apify",
         campaign_id, len(usernames),
     )
-    _activity_log(
-        campaign_id,
-        f"APIFY harvested {len(usernames)} candidate commenters: "
-        + (", ".join("@" + u for u in usernames) or "(none)"),
-    )
+    _activity_log(campaign_id, f"APIFY harvest complete: {len(usernames)} candidates")
     if not usernames:
         await _finish("completed", stage="done", error="no candidate users harvested")
         return
@@ -303,6 +388,14 @@ async def _run_apify(campaign_id, req, stop_event, db, config, _set, _finish, _a
                 await _cleanup_session(cred)
                 await _finish("stopped", stage="following")
                 return
+            if await _is_flagged(db, username):
+                # No Instagram action happened — skip the pacing wait too.
+                await _record_flagged_skip(db, campaign_id, username, idx, total)
+                continue
+            if await _is_brand(client, config, username):
+                # Only a paced profile read happened — no long wait needed.
+                await _record_brand_skip(db, campaign_id, username, idx, total)
+                continue
             await _record_follow(db, campaign_id, client, username, idx, total)
             # Space follows out (5-10 min) — skip the wait after the last one.
             if idx < total:
@@ -364,7 +457,8 @@ async def _run_suggested(campaign_id, req, stop_event, db, config, _set, _finish
                 empty_reloads += 1
                 continue
             empty_reloads = 0
-            await _set(candidates_found=len(seen) + len(fresh))
+            # Stream the new candidates to Mongo right away for the frontend.
+            await _push_candidates(db, campaign_id, fresh, source="instagram_suggested")
 
             capped = False
             for username in fresh:
@@ -376,6 +470,16 @@ async def _run_suggested(campaign_id, req, stop_event, db, config, _set, _finish
                     await _finish("stopped", stage="following")
                     return
                 seen.add(username)
+                if await _is_flagged(db, username):
+                    # No Instagram action happened — no pacing wait needed.
+                    await _record_flagged_skip(db, campaign_id, username, done + 1, target)
+                    done += 1
+                    continue
+                if await _is_brand(client, config, username):
+                    # Only a paced profile read happened — no long wait needed.
+                    await _record_brand_skip(db, campaign_id, username, done + 1, target)
+                    done += 1
+                    continue
                 row = await _record_follow(db, campaign_id, client, username, done + 1, target)
                 done += 1
                 if row["status"] == "skipped" and "daily cap" in (row.get("message") or ""):

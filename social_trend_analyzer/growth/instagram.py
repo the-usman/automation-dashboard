@@ -303,6 +303,41 @@ class InstagramClient:
         self._read_pause()
         return [u.username for u in users if getattr(u, "username", "")]
 
+    def following_usernames(self) -> list[str]:
+        """Usernames the logged-in account currently follows.
+
+        One paginated private read, capped by ``growth_following_fetch_max``
+        (0 = fetch all) — very large following lists paginate the private API
+        hard. Raises on failure instead of returning ``[]`` so a bulk-unfollow
+        caller fails loudly rather than silently doing nothing.
+        """
+        if self._cl is None:
+            raise RuntimeError("not logged in")
+        cap = int(self.config.get("growth_following_fetch_max", 1000))
+        uid = getattr(self._cl, "user_id", None) or self._cl.account_info().pk
+        users = self._cl.user_following(str(uid), amount=cap)
+        self._read_pause()
+        return [u.username for u in users.values() if getattr(u, "username", "")]
+
+    def is_business_account(self, username: str) -> bool | None:
+        """True if the account is a business/brand **page**, False if a person,
+        None when the profile could not be read (caller decides the default).
+
+        Used to follow people only, never brands. One private ``user_info`` read;
+        instagrapi caches the resolved user id, so the follow that usually comes
+        right after this check does not pay a second lookup.
+        """
+        if self._cl is None:
+            return None
+        try:
+            uid = self._cl.user_id_from_username(username)
+            info = self._cl.user_info(uid)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not read profile of @%s for brand check: %s", username, e)
+            return None
+        self._read_pause()
+        return bool(getattr(info, "is_business", False))
+
     def follow(self, username: str) -> ActionResult:
         return self._act("follow", username)
 

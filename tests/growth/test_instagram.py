@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from social_trend_analyzer.growth import instagram
 from social_trend_analyzer.growth.schemas import InstagramCredential
@@ -12,6 +13,7 @@ class FakeIGClient:
         self.followed = []
         self.unfollowed = []
         self.logged = None
+        self.is_business = False
 
     def set_settings(self, blob):
         self.blob = blob
@@ -42,9 +44,28 @@ class FakeIGClient:
     def totp_generate_code(self, seed):
         return "123456"
 
+    def user_info(self, uid):
+        return SimpleNamespace(is_business=self.is_business)
+
+    def account_info(self):
+        return SimpleNamespace(pk=1, username="u")
+
+    def user_following(self, uid, amount=0):
+        self.following_requested = (uid, amount)
+        return {
+            "1": SimpleNamespace(username="alice"),
+            "2": SimpleNamespace(username="bob"),
+            "3": SimpleNamespace(username=""),
+        }
+
 
 def _config(cap=150):
-    return {"ig_action_delay_seconds": 0, "ig_daily_action_cap": cap}
+    return {
+        "ig_action_delay_seconds": 0,
+        "ig_daily_action_cap": cap,
+        "ig_read_delay_seconds": 0,
+        "ig_delay_jitter_seconds": 0,
+    }
 
 
 def _login(monkeypatch, tmp_path, cred=None, cap=150):
@@ -93,6 +114,30 @@ def test_totp_passed_to_login(monkeypatch, tmp_path):
     cred = InstagramCredential(credential_id="c", username="u", password="p", totp_seed="SEED")
     _, fake = _login(monkeypatch, tmp_path, cred=cred)
     assert fake.logged[2] == "123456"
+
+
+def test_is_business_account_true_for_brand(monkeypatch, tmp_path):
+    client, fake = _login(monkeypatch, tmp_path)
+    fake.is_business = True
+    assert client.is_business_account("brandpage") is True
+
+
+def test_is_business_account_false_for_person(monkeypatch, tmp_path):
+    client, fake = _login(monkeypatch, tmp_path)
+    fake.is_business = False
+    assert client.is_business_account("realperson") is False
+
+
+def test_is_business_account_none_on_error(monkeypatch, tmp_path):
+    client, _ = _login(monkeypatch, tmp_path)
+    assert client.is_business_account("boom") is None
+
+
+def test_following_usernames(monkeypatch, tmp_path):
+    client, fake = _login(monkeypatch, tmp_path)
+    names = client.following_usernames()
+    assert sorted(names) == ["alice", "bob"]  # blank usernames dropped
+    assert fake.following_requested == ("1", 1000)  # default fetch cap applied
 
 
 def test_login_without_instagrapi_raises(monkeypatch, tmp_path):

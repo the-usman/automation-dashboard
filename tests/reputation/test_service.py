@@ -2,7 +2,6 @@ from pathlib import Path
 
 from reputation_analyzer import service
 from reputation_analyzer.schemas import (
-    NormalizedPost,
     PlatformScores,
     ReputationRequest,
     ReputationResponse,

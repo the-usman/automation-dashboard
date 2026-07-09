@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -27,22 +28,40 @@ PROFILE_ACTORS = {
 }
 
 
+def _window_start() -> str:
+    """First day (UTC, YYYY-MM-DD) of the reputation lookback window."""
+    start = datetime.now(timezone.utc) - timedelta(days=config.LOOKBACK_DAYS)
+    return start.strftime("%Y-%m-%d")
+
+
 def _actor_input(platform: str, username: str, limit: int) -> dict[str, Any]:
-    """Build the profile-scrape input for one platform's actor."""
+    """Build the profile-scrape input for one platform's actor.
+
+    Each actor gets the lookback window in its own dialect; ``normalize`` also
+    re-enforces the window client-side in case an actor ignores the param.
+    """
+    since = _window_start()
     if platform == "instagram":
         return {
             "directUrls": [f"https://www.instagram.com/{username}/"],
             "resultsType": "posts",
             "resultsLimit": limit,
+            "onlyPostsNewerThan": since,
         }
     if platform == "x":
-        return {"twitterHandles": [username], "sort": "Latest", "maxItems": limit}
+        return {
+            "twitterHandles": [username],
+            "sort": "Latest",
+            "maxItems": limit,
+            "start": since,
+        }
     if platform == "tiktok":
         return {
             "profiles": [username],
             "resultsPerPage": limit,
             "shouldDownloadVideos": False,
             "shouldDownloadCovers": False,
+            "oldestPostDateUnified": since,
         }
     raise ValueError(f"unsupported platform: {platform!r}")
 
@@ -72,6 +91,10 @@ def scrape_profile(platform: str, username: str) -> list[dict]:
     limit = config.POSTS_PER_PLATFORM
     actor_input = _actor_input(platform, username, limit)
     params = {"token": config.APIFY_API_TOKEN}
+    log.info(
+        "APIFY: starting %s for %s/@%s (limit=%d)", actor_id, platform, username, limit
+    )
+    log.debug("APIFY: %s input: %s", actor_id, actor_input)
 
     with httpx.Client(timeout=config.HTTP_TIMEOUT) as http:
         try:
@@ -81,11 +104,12 @@ def scrape_profile(platform: str, username: str) -> list[dict]:
             run_id = d.get("id")
             dataset_id = d.get("defaultDatasetId")
             status = d.get("status", "READY")
+            log.info("APIFY: run %s started for %s/@%s", run_id, platform, username)
         except Exception as e:  # noqa: BLE001
             log.warning("APIFY start failed for %s/%s: %s", platform, username, e)
             return []
 
-        for _ in range(config.APIFY_MAX_ATTEMPTS):
+        for attempt in range(config.APIFY_MAX_ATTEMPTS):
             if status in TERMINAL:
                 break
             time.sleep(config.APIFY_POLL_INTERVAL)
@@ -95,6 +119,10 @@ def scrape_profile(platform: str, username: str) -> list[dict]:
                 d = s.json().get("data", {})
                 status = d.get("status", status)
                 dataset_id = d.get("defaultDatasetId") or dataset_id
+                log.debug(
+                    "APIFY: run %s poll %d/%d status=%s",
+                    run_id, attempt + 1, config.APIFY_MAX_ATTEMPTS, status,
+                )
             except Exception as e:  # noqa: BLE001
                 log.warning("APIFY poll failed for %s: %s", run_id, e)
 
@@ -108,7 +136,12 @@ def scrape_profile(platform: str, username: str) -> list[dict]:
                 params={**params, "clean": "true", "format": "json"},
             )
             resp.raise_for_status()
-            return _items(resp.json())[:limit]
+            items = _items(resp.json())[:limit]
+            log.info(
+                "APIFY: run %s SUCCEEDED — %d item(s) fetched for %s/@%s",
+                run_id, len(items), platform, username,
+            )
+            return items
         except Exception as e:  # noqa: BLE001
             log.warning("APIFY fetch failed for dataset %s: %s", dataset_id, e)
             return []

@@ -51,9 +51,18 @@ def score(platform_posts: dict[str, list[NormalizedPost]]) -> ReputationResponse
     if not config.has_openai():
         raise RuntimeError("OPENAI_API_KEY is not configured")
 
+    payload = _posts_payload(platform_posts)
+    log.info(
+        "OPENAI: scoring with %s — %d platform(s), payload %d chars",
+        config.OPENAI_MODEL, len(platform_posts), len(payload),
+    )
     chat = ChatOpenAI(
         model=config.OPENAI_MODEL, api_key=config.OPENAI_API_KEY, temperature=0.2
     )
     chain = _PROMPT | chat.with_structured_output(ReputationResponse)
-    result = chain.invoke({"posts": _posts_payload(platform_posts)})
+    result = chain.invoke({"posts": payload})
+    log.info(
+        "OPENAI: scored — overall=%s platform_scores=%s",
+        result.overall_score, result.platform_scores.model_dump(),
+    )
     return result
