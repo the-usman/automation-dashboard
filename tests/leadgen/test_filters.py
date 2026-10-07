@@ -88,3 +88,53 @@ def test_enum_values_filtered_to_vocabulary():
 
     assert out.seniority_level == ["C-Level", "VP"]   # canonicalized, bogus dropped
     assert out.email_status == ["validated"]
+
+
+# ── Google Maps actor rules ────────────────────────────────────────────────────
+def test_gmaps_select_enums_fall_back_on_bad_values():
+    from leadgen.schemas import GoogleMapsFilters
+
+    gm = GoogleMapsFilters(searchMatching="bogus", placeMinimumStars="99", website="nope")
+    out = filters._apply_google_maps_rules(gm, {})
+
+    assert out.searchMatching == "all"        # invalid → default
+    assert out.placeMinimumStars == ""        # invalid → default (any)
+    assert out.website == "allPlaces"         # invalid → default
+
+
+def test_gmaps_select_enums_canonicalized():
+    from leadgen.schemas import GoogleMapsFilters
+
+    gm = GoogleMapsFilters(website="withwebsite", searchMatching="ONLY_EXACT")
+    out = filters._apply_google_maps_rules(gm, {})
+
+    assert out.website == "withWebsite"
+    assert out.searchMatching == "only_exact"
+
+
+def test_gmaps_leads_enrichment_capped_and_departments_filtered():
+    from leadgen.schemas import GoogleMapsFilters
+
+    gm = GoogleMapsFilters(
+        maximumLeadsEnrichmentRecords=999,
+        leadsEnrichmentDepartments=["sales", "Bogus", "marketing"],
+        verifyLeadsEnrichmentEmails=True,
+    )
+    out = filters._apply_google_maps_rules(gm, {"leadgen_gmaps_max_leads_per_place": 5})
+
+    assert out.maximumLeadsEnrichmentRecords == 5                 # capped
+    assert out.leadsEnrichmentDepartments == ["sales", "marketing"]  # bogus dropped
+
+
+def test_gmaps_departments_cleared_when_enrichment_off():
+    from leadgen.schemas import GoogleMapsFilters
+
+    gm = GoogleMapsFilters(
+        maximumLeadsEnrichmentRecords=0,
+        leadsEnrichmentDepartments=["sales"],
+        verifyLeadsEnrichmentEmails=True,
+    )
+    out = filters._apply_google_maps_rules(gm, {})
+
+    assert out.leadsEnrichmentDepartments == []       # enrichment off → no departments
+    assert out.verifyLeadsEnrichmentEmails is False

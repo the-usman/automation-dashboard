@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 
 def _google_maps_actor(config: dict) -> str:
+    # compass/crawler-google-places. Immutable actor ID "nwua9Gu5YrADL7ZDj" also works.
     return config.get("leadgen_google_maps_actor") or "compass~crawler-google-places"
 
 

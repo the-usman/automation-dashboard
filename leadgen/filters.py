@@ -26,6 +26,10 @@ from .schemas import (
     EMAIL_STATUSES,
     FUNCTIONAL_LEVELS,
     FUNDING_ROUNDS,
+    GMAPS_LEADS_DEPARTMENTS,
+    GMAPS_MIN_STARS,
+    GMAPS_SEARCH_MATCHING,
+    GMAPS_WEBSITE,
     SENIORITY_LEVELS,
     GoogleMapsFilters,
     LeadFilterSet,
@@ -42,10 +46,23 @@ _FILTER_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             "You are a lead-generation strategist. Given a PRODUCT/SERVICES description, "
             "produce filters for two Apify actors and recommend which one(s) to use.\n\n"
-            "1) google_maps — scrapes LOCAL BUSINESSES from Google Maps. Fill "
-            "searchStringsArray with the business types this product would sell to or "
-            "partner with, and locationQuery if the description implies a place. Use this "
-            "when the targets are local/physical businesses.\n"
+            "1) google_maps — the compass/crawler-google-places scraper for LOCAL "
+            "BUSINESSES. Fill:\n"
+            "   - searchStringsArray: the business types this product sells to / partners "
+            "with (e.g. ['specialty coffee shop','cafe']).\n"
+            "   - locationQuery: a single free-text location when the description implies "
+            "one (e.g. 'Austin, Texas, USA'); leave blank only if truly nationwide.\n"
+            "   - searchMatching: 'all' normally; 'only_includes'/'only_exact' to tighten "
+            "name matching ({gmaps_matching}).\n"
+            "   - placeMinimumStars: set a floor ({gmaps_stars}) only if lead quality/"
+            "reputation matters.\n"
+            "   - website: use 'withWebsite' when you need contact emails (emails are "
+            "scraped from the business website) ({gmaps_website}).\n"
+            "   - skipClosedPlaces: true to ignore closed businesses.\n"
+            "   - maximumLeadsEnrichmentRecords: >0 ONLY when the user wants employee-level "
+            "contacts (names/titles/emails) at each business; otherwise 0. If you set it, "
+            "optionally set leadsEnrichmentDepartments from ({gmaps_departments}).\n"
+            "   Use google_maps when the targets are local/physical businesses.\n"
             "2) leads_finder — finds B2B DECISION-MAKERS (people with job titles). Fill "
             "contact_job_title, seniority_level, functional_level, company_industry, "
             "company_keywords and size to match the ideal buyer. Use this when the targets "
@@ -81,6 +98,12 @@ def _keep_enum(values: list[str], allowed: tuple[str, ...]) -> list[str]:
     return out
 
 
+def _keep_scalar_enum(value: str, allowed: tuple[str, ...], default: str) -> str:
+    """Canonicalize a single select value; fall back to default if off-vocabulary."""
+    lut = {a.lower(): a for a in allowed}
+    return lut.get(str(value or "").strip().lower(), default)
+
+
 def _apply_google_maps_rules(gm: GoogleMapsFilters, config: dict) -> GoogleMapsFilters:
     gm.maxCrawledPlacesPerSearch = min(
         gm.maxCrawledPlacesPerSearch or int(config.get("leadgen_gmaps_max_places", 50)),
@@ -88,10 +111,18 @@ def _apply_google_maps_rules(gm: GoogleMapsFilters, config: dict) -> GoogleMapsF
     )
     if not gm.language:
         gm.language = str(config.get("leadgen_gmaps_language", "en"))
-    # scrapeContacts default comes from config (on by default) when the LLM omitted it.
-    gm.scrapeContacts = bool(gm.scrapeContacts) if gm.scrapeContacts is not None else bool(
-        config.get("leadgen_gmaps_scrape_contacts", True)
-    )
+    gm.scrapeContacts = bool(gm.scrapeContacts)
+    # Enforce the actor's select vocabularies (bad LLM value → safe default).
+    gm.searchMatching = _keep_scalar_enum(gm.searchMatching, GMAPS_SEARCH_MATCHING, "all")
+    gm.placeMinimumStars = _keep_scalar_enum(gm.placeMinimumStars, GMAPS_MIN_STARS, "")
+    gm.website = _keep_scalar_enum(gm.website, GMAPS_WEBSITE, "allPlaces")
+    # Employee-leads enrichment: cap cost; departments only make sense when it is on.
+    lead_cap = int(config.get("leadgen_gmaps_max_leads_per_place", 10))
+    gm.maximumLeadsEnrichmentRecords = max(0, min(gm.maximumLeadsEnrichmentRecords, lead_cap))
+    gm.leadsEnrichmentDepartments = _keep_enum(gm.leadsEnrichmentDepartments, GMAPS_LEADS_DEPARTMENTS)
+    if gm.maximumLeadsEnrichmentRecords == 0:
+        gm.leadsEnrichmentDepartments = []
+        gm.verifyLeadsEnrichmentEmails = False
     return gm
 
 
@@ -170,6 +201,10 @@ def generate_filters(
             "functionals": ", ".join(FUNCTIONAL_LEVELS),
             "email_statuses": ", ".join(EMAIL_STATUSES),
             "fundings": ", ".join(FUNDING_ROUNDS),
+            "gmaps_matching": ", ".join(GMAPS_SEARCH_MATCHING),
+            "gmaps_stars": ", ".join(s for s in GMAPS_MIN_STARS if s) or "none",
+            "gmaps_website": ", ".join(GMAPS_WEBSITE),
+            "gmaps_departments": ", ".join(GMAPS_LEADS_DEPARTMENTS),
         })
         result.product_description = description
         return _postprocess(result, actors, config)

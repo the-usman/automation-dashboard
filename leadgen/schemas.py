@@ -35,6 +35,18 @@ FUNDING_ROUNDS = (
     "Series E", "Series F", "Venture", "Debt", "Convertible", "PE", "Other",
 )
 
+# --------------------------------------------------------------------------- #
+# Google Maps scraper (compass/crawler-google-places) enum vocabularies.
+# --------------------------------------------------------------------------- #
+GMAPS_SEARCH_MATCHING = ("all", "only_includes", "only_exact")
+GMAPS_MIN_STARS = ("", "two", "twoAndHalf", "three", "threeAndHalf", "four", "fourAndHalf")
+GMAPS_WEBSITE = ("allPlaces", "withWebsite", "withoutWebsite")
+GMAPS_LEADS_DEPARTMENTS = (
+    "c_suite", "product", "engineering_technical", "design", "education",
+    "finance", "human_resources", "information_technology", "legal",
+    "marketing", "medical_health", "operations", "sales", "consulting",
+)
+
 
 def _as_str_list(v: Any) -> list[str]:
     """Coerce scraped/LLM JSON (None, scalar, or list) into a clean str list."""
@@ -78,20 +90,54 @@ class GoogleMapsFilters(BaseModel):
     categoryFilterWords: list[str] = Field(
         default_factory=list, description="optional Google category words to restrict matches"
     )
+    searchMatching: str = Field(
+        default="all",
+        description="how strictly a place name must match the search term: "
+        "'all' | 'only_includes' | 'only_exact'",
+    )
+    placeMinimumStars: str = Field(
+        default="",
+        description="only scrape places at/above this rating: '' (any) | 'two' | 'twoAndHalf' | "
+        "'three' | 'threeAndHalf' | 'four' | 'fourAndHalf'",
+    )
+    website: str = Field(
+        default="allPlaces",
+        description="filter by website presence: 'allPlaces' | 'withWebsite' | 'withoutWebsite'. "
+        "Use 'withWebsite' when you need emails (contact enrichment reads the site).",
+    )
+    skipClosedPlaces: bool = Field(
+        default=False, description="skip temporarily/permanently closed places"
+    )
+    maximumLeadsEnrichmentRecords: int = Field(
+        default=0, ge=0,
+        description="per-place employee leads to extract (name/title/email/LinkedIn); 0 = off "
+        "(extra cost add-on). Set >0 only for B2B employee-level prospecting.",
+    )
+    leadsEnrichmentDepartments: list[str] = Field(
+        default_factory=list,
+        description="limit extracted leads to departments (only applies when "
+        "maximumLeadsEnrichmentRecords > 0): c_suite, product, engineering_technical, design, "
+        "education, finance, human_resources, information_technology, legal, marketing, "
+        "medical_health, operations, sales, consulting",
+    )
+    verifyLeadsEnrichmentEmails: bool = Field(
+        default=False, description="verify each extracted lead's email (extra cost)"
+    )
     countryCode: str = Field(default="", description="optional ISO country code geo filter")
     city: str = Field(default="", description="optional city geo filter")
     state: str = Field(default="", description="optional state/region geo filter")
     postalCode: str = Field(default="", description="optional postal code geo filter")
 
     @field_validator(
-        "searchStringsArray", "categoryFilterWords", mode="before"
+        "searchStringsArray", "categoryFilterWords", "leadsEnrichmentDepartments", mode="before"
     )
     @classmethod
     def _coerce_lists(cls, v: Any) -> list[str]:
         return _as_str_list(v)
 
     @field_validator(
-        "locationQuery", "language", "countryCode", "city", "state", "postalCode",
+        "locationQuery", "language", "searchMatching", "placeMinimumStars", "website",
+        "countryCode", "city", "state", "postalCode",
         mode="before",
     )
     @classmethod

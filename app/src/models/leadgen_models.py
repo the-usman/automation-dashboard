@@ -20,6 +20,13 @@ class GoogleMapsFiltersModel(BaseModel):
     language: str = "en"
     scrapeContacts: bool = True
     categoryFilterWords: list[str] = Field(default_factory=list)
+    searchMatching: str = "all"          # all | only_includes | only_exact
+    placeMinimumStars: str = ""          # "" | two | twoAndHalf | three | threeAndHalf | four | fourAndHalf
+    website: str = "allPlaces"           # allPlaces | withWebsite | withoutWebsite
+    skipClosedPlaces: bool = False
+    maximumLeadsEnrichmentRecords: int = 0   # >0 = per-place employee leads (extra cost)
+    leadsEnrichmentDepartments: list[str] = Field(default_factory=list)
+    verifyLeadsEnrichmentEmails: bool = False
     countryCode: str = ""
     city: str = ""
     state: str = ""

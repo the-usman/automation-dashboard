@@ -86,8 +86,15 @@ export interface GoogleMapsFilters {
   locationQuery: string;
   maxCrawledPlacesPerSearch: number;
   language: string;
-  scrapeContacts: boolean;
+  scrapeContacts: boolean;                 // website emails/socials (extra cost)
   categoryFilterWords: string[];
+  searchMatching: "all" | "only_includes" | "only_exact";
+  placeMinimumStars: "" | "two" | "twoAndHalf" | "three" | "threeAndHalf" | "four" | "fourAndHalf";
+  website: "allPlaces" | "withWebsite" | "withoutWebsite";
+  skipClosedPlaces: boolean;
+  maximumLeadsEnrichmentRecords: number;   // >0 = per-place employee leads (extra cost)
+  leadsEnrichmentDepartments: string[];    // c_suite, product, engineering_technical, design, education, finance, human_resources, information_technology, legal, marketing, medical_health, operations, sales, consulting
+  verifyLeadsEnrichmentEmails: boolean;
   countryCode: string;
   city: string;
   state: string;

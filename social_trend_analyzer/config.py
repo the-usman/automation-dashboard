@@ -116,13 +116,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # read (0 = all); huge lists paginate the private API hard.
     "growth_following_fetch_max": 1000,
     # --- Lead Generation workflow (Apify Google Maps + Leads Finder) ---
-    # Actor ids (Apify uses '~' between org and actor).
+    # Actor ids. Google Maps is pinned to the immutable actor ID (safe against slug
+    # renames); it is the "compass/crawler-google-places" scraper. Apify also accepts
+    # the "compass~crawler-google-places" slug form. Leads Finder uses the slug form.
     "leadgen_google_maps_actor": "compass~crawler-google-places",
     "leadgen_leads_finder_actor": "code_crafter~leads-finder",
     # Google Maps cost caps / defaults applied to generated filters.
     "leadgen_gmaps_max_places": 50,        # maxCrawledPlacesPerSearch ceiling
     "leadgen_gmaps_scrape_contacts": True, # enrich with website emails/socials (extra cost)
     "leadgen_gmaps_language": "en",
+    # Employee-leads enrichment (maximumLeadsEnrichmentRecords) is a pricier add-on; the
+    # generator leaves it off (0) and this caps it if the LLM/user turns it on.
+    "leadgen_gmaps_max_leads_per_place": 10,
     # Leads Finder — free Apify plan caps this actor at 100 leads per run.
     "leadgen_leads_fetch_count": 100,
     # These actors (esp. Google Maps with contact enrichment) run longer than the
