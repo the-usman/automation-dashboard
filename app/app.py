@@ -28,6 +28,7 @@ from app.src.routes.calendar import router as calendar_router
 from app.src.routes.growth import router as growth_router
 from app.src.routes.reputation import router as reputation_router
 from app.src.routes.jobs import router as jobs_router
+from app.src.routes.leadgen import router as leadgen_router
 from app.src.services.reply_scheduler import reply_check_loop
 
 
@@ -69,3 +70,4 @@ app.include_router(calendar_router)
 app.include_router(growth_router)
 app.include_router(reputation_router)
 app.include_router(jobs_router)
+app.include_router(leadgen_router)
